@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}Settings · Crossref Auditor{% endblock %}
+{% block content %}
+<section class="card">
+  <h1>Audit settings</h1>
+  <p class="muted">Toggle rules on/off, adjust severity, and tune thresholds. Saved to <code>config/auditor_config.json</code>.</p>
+  <form method="post" class="settings-form">
+    {% for meta in metas %}
+      {% set rc = cfg.rules.get(meta.id) %}
+      <fieldset class="rule">
+        <legend><code>{{ meta.id }}</code> — {{ meta.name }}</legend>
+        <p class="muted">{{ meta.description }} <span class="scope-tag">scope: {{ meta.scope }}</span></p>
+        <div class="rule-controls">
+          <label class="toggle">
+            <input type="checkbox" name="{{ meta.id }}__enabled" {% if rc and rc.enabled %}checked{% endif %}>
+            enabled
+          </label>
+          <label>
+            severity:
+            <select name="{{ meta.id }}__severity">
+              {% for s in ["error", "warning", "info"] %}
+                <option value="{{ s }}" {% if rc and rc.severity == s %}selected{% endif %}>{{ s }}</option>
+              {% endfor %}
+            </select>
+          </label>
+        </div>
+        {% if meta.params %}
+          <div class="params">
+            {% for p in meta.params %}
+              <label>
+                <span class="param-name">{{ p.name }}</span>
+                <input
+                  type="{{ 'number' if p.type in ['int','float'] else 'text' }}"
+                  {% if p.type == 'int' %}step="1"{% elif p.type == 'float' %}step="any"{% endif %}
+                  name="{{ meta.id }}__param__{{ p.name }}"
+                  value="{{ rc.params[p.name] if rc and p.name in rc.params else p.default }}">
+                <small class="muted">{{ p.description }}</small>
+              </label>
+            {% endfor %}
+          </div>
+        {% endif %}
+      </fieldset>
+    {% endfor %}
+    <div class="actions">
+      <button type="submit">Save settings</button>
+    </div>
+  </form>
+</section>
+{% endblock %}

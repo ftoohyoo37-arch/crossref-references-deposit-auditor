@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}Audit a deposit · Crossref Auditor{% endblock %}
+{% block content %}
+<section class="card">
+  <h1>Audit a Crossref deposit</h1>
+  <p class="muted">Upload a <code>&lt;doi_batch&gt;</code> XML file. Streamed citation parsing handles deposits with thousands of references.</p>
+  <form action="{{ url_for('run_audit') }}" method="post" enctype="multipart/form-data" class="upload">
+    <input type="file" name="xmlfile" accept=".xml,application/xml,text/xml" required>
+    <button type="submit">Run audit</button>
+  </form>
+</section>
+
+<section class="card">
+  <h2>Recent audits</h2>
+  {% if audits %}
+  <table class="history">
+    <thead>
+      <tr>
+        <th>#</th><th>File</th><th>Run at</th>
+        <th>Cites</th><th>Errors</th><th>Warnings</th><th>Info</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for a in audits %}
+      <tr>
+        <td>{{ a['id'] }}</td>
+        <td><a href="{{ url_for('report', audit_id=a['id']) }}">{{ a['filename'] }}</a></td>
+        <td class="muted">{{ a['created_at'] }}</td>
+        <td>{{ a['citation_n'] }}</td>
+        <td class="sev-error">{{ a['error_n'] }}</td>
+        <td class="sev-warning">{{ a['warning_n'] }}</td>
+        <td class="sev-info">{{ a['info_n'] }}</td>
+        <td>
+          <form action="{{ url_for('delete_audit', audit_id=a['id']) }}" method="post"
+                onsubmit="return confirm('Delete audit #{{ a['id'] }}?')">
+            <button type="submit" class="link-btn">delete</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+    <p class="muted">No audits yet. Upload a deposit XML above to start.</p>
+  {% endif %}
+</section>
+{% endblock %}

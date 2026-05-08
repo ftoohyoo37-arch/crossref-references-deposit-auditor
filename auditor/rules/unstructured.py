@@ -1,0 +1,134 @@
+from __future__ import annotations
+
+import re
+
+from ..models import Finding, ParamMeta, RuleMeta, Severity
+from . import register_citation_rule
+from ._util import citation_key, find_child, short_snippet, text_of
+
+META = RuleMeta(
+    id="unstructured_length",
+    name="Unstructured citation length & glued-refs",
+    description=(
+        "Flags <unstructured_citation> values that are suspiciously short "
+        "(likely a fragment) or suspiciously long (likely two or more "
+        "references concatenated by a scraper)."
+    ),
+    scope="citation",
+    default_severity=Severity.WARNING,
+    default_enabled=True,
+    params=[
+        ParamMeta("min_words", "int", 5, "Below this word count, flag as fragment."),
+        ParamMeta("max_words", "int", 60, "Above this word count, flag as likely glued references."),
+        ParamMeta("max_year_count", "int", 1, "Number of 4-digit years that triggers a 'likely two refs glued' finding."),
+        ParamMeta("max_semicolons", "int", 2, "Semicolon count that triggers a 'likely two refs glued' finding."),
+    ],
+)
+
+YEAR_RE = re.compile(r"(?<!\d)(1[5-9]\d{2}|20\d{2}|2100)(?!\d)")
+
+
+def _real_year_tokens(text: str) -> list[str]:
+    """Year-looking tokens minus the obvious false positives.
+
+    Excludes:
+    - Volume markers like `1991(2)` (year followed by `(digit`).
+    - URL/handle fragments like `/2027/...` or `2027.42` (preceded by `/`,
+      `.`, or `=`, or followed by `.` then a digit).
+    - Page ranges like `pp. 1991-1995` (year followed by `-` then a digit
+      that's part of an obvious range with the preceding number close in
+      magnitude — a 4-digit "year" inside `\\d{4}-\\d{4}` is much more often
+      a page range than two distinct publication years).
+    """
+    out: list[str] = []
+    for m in YEAR_RE.finditer(text):
+        start, end = m.span()
+        before_char = text[start - 1] if start > 0 else ""
+        after = text[end:end + 5]
+
+        # Volume marker: 1991(2)
+        if after.startswith("(") and len(after) > 1 and after[1].isdigit():
+            continue
+        # URL / handle fragment: /2027/, =2027, .2027, 2027.42
+        if before_char in "/.=":
+            continue
+        if after.startswith(".") and len(after) > 1 and after[1].isdigit():
+            continue
+        # Page range: 1991-1995 (and the preceding token was also year-ish)
+        if after.startswith("-") and len(after) > 1 and after[1].isdigit():
+            # Only treat as page range if the preceding context is a comma
+            # or "pp.": "pp. 1991-1995" or "Foo, 1991-1995"
+            preceding = text[max(0, start - 5):start]
+            if "pp." in preceding or preceding.endswith(", ") or preceding.endswith(": "):
+                continue
+        out.append(m.group(0))
+    return out
+
+
+@register_citation_rule(META)
+def unstructured_length(elem, ctx) -> list[Finding]:
+    sev = ctx.config.severity(META.id, META.default_severity.value)
+    min_words = int(ctx.config.param(META.id, "min_words", 5))
+    max_words = int(ctx.config.param(META.id, "max_words", 60))
+    max_year_count = int(ctx.config.param(META.id, "max_year_count", 1))
+    max_semis = int(ctx.config.param(META.id, "max_semicolons", 2))
+
+    uc = find_child(elem, "unstructured_citation")
+    if uc is None:
+        return []
+
+    text = text_of(uc)
+    if not text:
+        return [Finding(
+            rule_id=META.id,
+            severity=sev,
+            message="Empty <unstructured_citation>.",
+            line=elem.sourceline,
+            citation_key=citation_key(elem),
+        )]
+
+    words = text.split()
+    findings: list[Finding] = []
+
+    if len(words) < min_words:
+        findings.append(Finding(
+            rule_id=META.id,
+            severity=sev,
+            message=f"Unstructured citation is unusually short ({len(words)} words; min={min_words}). Likely a fragment.",
+            line=elem.sourceline,
+            citation_key=citation_key(elem),
+            snippet=short_snippet(text),
+        ))
+    elif len(words) > max_words:
+        findings.append(Finding(
+            rule_id=META.id,
+            severity=sev,
+            message=f"Unstructured citation is unusually long ({len(words)} words; max={max_words}). Likely a scraping error that glued multiple references together.",
+            line=elem.sourceline,
+            citation_key=citation_key(elem),
+            snippet=short_snippet(text),
+        ))
+
+    years = _real_year_tokens(text)
+    if len(years) > max_year_count:
+        findings.append(Finding(
+            rule_id=META.id,
+            severity=sev,
+            message=f"Unstructured citation contains {len(years)} year-like tokens ({', '.join(years)}). Likely two or more references glued together.",
+            line=elem.sourceline,
+            citation_key=citation_key(elem),
+            snippet=short_snippet(text),
+        ))
+
+    semis = text.count(";")
+    if semis > max_semis:
+        findings.append(Finding(
+            rule_id=META.id,
+            severity=sev,
+            message=f"Unstructured citation contains {semis} semicolons. Likely multiple authors/references run together.",
+            line=elem.sourceline,
+            citation_key=citation_key(elem),
+            snippet=short_snippet(text),
+        ))
+
+    return findings

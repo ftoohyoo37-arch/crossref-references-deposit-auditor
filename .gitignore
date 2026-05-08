@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+audits.db
+audits.db-journal
+uploads/
+samples/
+config/auditor_config.json
+config/auditor_config.local.json
+config/crossref_xsd/
+.venv/
+venv/
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
