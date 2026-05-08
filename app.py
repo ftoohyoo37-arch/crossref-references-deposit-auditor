@@ -161,15 +161,25 @@ def delete_audit(audit_id: int):
 
 # ---------- Cleanup routes ----------
 
-def _load_citation_at(xml_path: Path, line: int) -> tuple[str | None, str | None]:
-    """Return (key, unstructured_citation_text) for the citation at `line`."""
+def _load_citation_index(xml_path: Path) -> dict[int, tuple[str | None, str | None]]:
+    """Parse the deposit XML ONCE and return a mapping
+    {citation_source_line: (citation_key, unstructured_citation_text)}.
+
+    Cleanup views need the text for every flagged citation; calling this
+    once and looking up O(1) per card avoids re-parsing the whole tree
+    per card (which was O(N**2) and timed out on 1k+ card cleanups).
+    """
     parser = ET.XMLParser(remove_blank_text=False)
     tree = ET.parse(str(xml_path), parser)
+    index: dict[int, tuple[str | None, str | None]] = {}
     for elem in tree.getroot().iter():
-        if elem.sourceline == line and elem.tag.rsplit("}", 1)[-1] == "citation":
+        if elem.tag.rsplit("}", 1)[-1] == "citation":
             uc = find_child(elem, "unstructured_citation")
-            return elem.get("key"), text_of(uc) if uc is not None else None
-    return None, None
+            text = text_of(uc) if uc is not None else None
+            line = elem.sourceline
+            if line is not None:
+                index[line] = (elem.get("key"), text)
+    return index
 
 
 @app.route("/cleanup/<int:audit_id>")
@@ -196,9 +206,13 @@ def cleanup(audit_id: int):
 
     # Pull each citation's full text and propose splits (cheap; no Crossref yet)
     xml_path = Path(row["xml_path"])
+    citation_index = _load_citation_index(xml_path)  # parse once, O(1) per card
     cards: list[dict] = []
     for line in sorted(by_line.keys()):
-        key, full_text = _load_citation_at(xml_path, line)
+        info = citation_index.get(line)
+        if info is None:
+            continue
+        key, full_text = info
         if full_text is None:
             continue
         proposed = propose_splits(full_text)
