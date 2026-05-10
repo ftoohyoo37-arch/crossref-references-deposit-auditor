@@ -27,12 +27,19 @@ META = RuleMeta(
 )
 
 YEAR_RE = re.compile(r"(?<!\d)(1[5-9]\d{2}|20\d{2}|2100)(?!\d)")
+# Quoted-region detector. Handles straight quotes and Unicode smart quotes.
+# Used to exclude year-like numbers that appear inside an article/chapter
+# title (e.g. "The 1984 election" or "Year 2000 in retrospect"); those
+# aren't second publication years, just numbers in titles.
+QUOTED_REGION_RE = re.compile(r"[\"“][^\"“”]*[\"”]")
 
 
 def _real_year_tokens(text: str) -> list[str]:
     """Year-looking tokens minus the obvious false positives.
 
     Excludes:
+    - Years inside quoted titles (e.g. "The 1984 election" — title number,
+      not a second publication year).
     - Volume markers like `1991(2)` (year followed by `(digit`).
     - URL/handle fragments like `/2027/...` or `2027.42` (preceded by `/`,
       `.`, or `=`, or followed by `.` then a digit).
@@ -41,9 +48,15 @@ def _real_year_tokens(text: str) -> list[str]:
       magnitude — a 4-digit "year" inside `\\d{4}-\\d{4}` is much more often
       a page range than two distinct publication years).
     """
+    quoted_spans = [(m.start(), m.end()) for m in QUOTED_REGION_RE.finditer(text)]
+
     out: list[str] = []
     for m in YEAR_RE.finditer(text):
         start, end = m.span()
+        # Skip year-like numbers that fall inside a quoted title.
+        if any(qs <= start < qe for qs, qe in quoted_spans):
+            continue
+
         before_char = text[start - 1] if start > 0 else ""
         after = text[end:end + 5]
 
@@ -57,8 +70,6 @@ def _real_year_tokens(text: str) -> list[str]:
             continue
         # Page range: 1991-1995 (and the preceding token was also year-ish)
         if after.startswith("-") and len(after) > 1 and after[1].isdigit():
-            # Only treat as page range if the preceding context is a comma
-            # or "pp.": "pp. 1991-1995" or "Foo, 1991-1995"
             preceding = text[max(0, start - 5):start]
             if "pp." in preceding or preceding.endswith(", ") or preceding.endswith(": "):
                 continue

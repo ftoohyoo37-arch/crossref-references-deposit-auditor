@@ -53,10 +53,18 @@ _CONF_MARKER_RE = re.compile(
 )
 
 # Website / news signals
-_URL_RE = re.compile(r"https?://", re.IGNORECASE)
+# URL: either a fully-qualified http(s) URL OR a bare www. domain. The
+# bare-domain form is common in Chicago notes-and-bibliography citations
+# that quote the display URL without protocol.
+_URL_RE = re.compile(
+    r"(?:https?://|\bwww\.[a-z0-9\-]+\.[a-z]{2,})",
+    re.IGNORECASE,
+)
 _MONTH_DAY_YEAR_RE = re.compile(
     r"\b(?:January|February|March|April|May|June|July|August|"
-    r"September|October|November|December)\s+\d{1,2},?\s+\d{4}\b"
+    r"September|October|November|December|"
+    r"Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sept?|Oct|Nov|Dec)\.?"
+    r"\s+\d{1,2},?\s+\d{4}\b"
 )
 _RETRIEVED_RE = re.compile(r"\b(?:Retrieved\s+from|Retrieved\s+on|Accessed)\b", re.IGNORECASE)
 # Patterns that signal a JOURNAL article (suppress 'website' classification)
