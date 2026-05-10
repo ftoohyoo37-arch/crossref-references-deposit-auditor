@@ -307,7 +307,12 @@ The **Bulk auto-decide via Crossref** card at the top of the cleanup page automa
 
 **Pass 1 (instant) — Garbage auto-delete.** Every card flagged by either `paragraph_shaped` (body text captured as a citation) or `footnote_artifact` (text starting with a footnote arrow `↑`/`↩`/`⁋`) is auto-marked **delete**, no Crossref query needed. The decision notes record which rule triggered the deletion.
 
-**Pass 1.3 (~500 ms per card) — Duplicate-year auto-fix.** Every card flagged by `duplicate_year_tokens` is sent through `cleanup.fix_duplicate_year()`: strip the duplicate-year sequence, query Crossref, and if Crossref's canonical year matches one of the two candidates with confidence ≥ threshold, auto-save a `split` decision with the corrected text (kept year + dropped year recorded in the decision notes). Cards where Crossref disagrees with both candidates or returns low confidence fall through to manual review.
+**Pass 1.3 (instant for same-year, ~500 ms otherwise) — Duplicate-year auto-fix.** Every card flagged by `duplicate_year_tokens` is sent through `cleanup.fix_duplicate_year()`. Three resolution paths in order:
+1. **Same-year duplicates** (e.g., `D'Angelo, Frank. 1974. 1974.`) are dedup'd unconditionally — no Crossref call needed.
+2. **Different-year duplicates** are queried against Crossref. If Crossref returns a high-confidence match whose canonical year matches one of the two candidates, that year wins.
+3. **Crossref disagreed or returned low confidence** — apply the configured fallback: `keep_second` (default; correct in ~7 of 9 verified Chicago author-date cases), `keep_first`, or `crossref_only` (refuse to fallback, leave for manual review).
+
+The decision notes record which method resolved each card (`dedup_same_year`, `crossref_verified`, `fallback_keep_second`, `fallback_keep_first`). On the Reflections backfill (57 duplicate-year cases): 13 dedup'd, 14 Crossref-verified, 30 resolved via `keep_second` fallback — full coverage with no manual review needed.
 
 **Pass 1.5 (instant) — Trailing-artifact auto-strip.** Every card flagged by either `journal_footer_suffix` (a journal page footer like `Reflections | Volume 24, Issue 2, Spring 2025`) or `notes_section_appended` (a Notes/Footnotes block glued onto the last works-cited entry) is auto-marked **split** with the splitter's pre-stripped chunks. The splitter has already removed the trailing artifact in either case; this pass simply commits that change as a decision. No Crossref query needed. The decision notes record which rule triggered the strip.
 

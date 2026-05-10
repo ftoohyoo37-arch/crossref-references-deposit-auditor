@@ -43,6 +43,13 @@
         <option value="delete">auto-delete (aggressive — treat low-confidence as garbage)</option>
       </select>
     </label>
+    <label>Duplicate-year fallback:
+      <select id="auto-year-fallback">
+        <option value="keep_second" selected>keep second year (recommended for Chicago author-date)</option>
+        <option value="keep_first">keep first year</option>
+        <option value="crossref_only">Crossref only (safest; leaves unresolved cases pending)</option>
+      </select>
+    </label>
     <label class="toggle">
       <input type="checkbox" id="auto-recheck"> re-check already-decided cards
     </label>
@@ -191,6 +198,7 @@ document.getElementById('auto-run').addEventListener('click', async () => {
   const threshold = parseFloat(document.getElementById('auto-threshold').value) || 0;
   const recheck = document.getElementById('auto-recheck').checked;
   const fallback = document.getElementById('auto-fallback').value; // 'pending' | 'keep' | 'delete'
+  const yearFallback = document.getElementById('auto-year-fallback').value; // 'keep_second' | 'keep_first' | 'crossref_only'
   const cards = Array.from(document.querySelectorAll('.cleanup-card'));
   const progress = document.getElementById('auto-progress');
   const runBtn = document.getElementById('auto-run');
@@ -238,9 +246,16 @@ document.getElementById('auto-run').addEventListener('click', async () => {
     if (!rules.includes('duplicate_year_tokens')) continue;
     const fullText = card.dataset.fullText || '';
     if (!fullText) continue;
-    progress.textContent = `Pass 1.3: querying Crossref for duplicate-year card line ${card.dataset.line}…`;
-    const r = await postJSON(yearFixUrl, {text: fullText, min_score: threshold});
-    await new Promise(r => setTimeout(r, 150));  // be polite to Crossref
+    progress.textContent = `Pass 1.3: resolving duplicate-year card line ${card.dataset.line}…`;
+    const r = await postJSON(yearFixUrl, {
+      text: fullText,
+      min_score: threshold,
+      fallback: yearFallback,
+    });
+    // Be polite to Crossref only when we actually queried it (different-year cases).
+    if (r && r.method && r.method !== 'dedup_same_year') {
+      await new Promise(r => setTimeout(r, 150));
+    }
     if (!r || !r.fixed) continue;
     await postJSON(decisionUrl, {
       line: parseInt(card.dataset.line),
@@ -248,7 +263,7 @@ document.getElementById('auto-run').addEventListener('click', async () => {
       action: 'split',
       split_chunks: [r.fixed],
       decided_by: 'auto',
-      notes: `auto-fixed duplicate years (kept ${r.kept_year}, dropped ${r.dropped_year})`,
+      notes: `auto-fixed duplicate years (${r.method}: kept ${r.kept_year}, dropped ${r.dropped_year})`,
     });
     applyDecisionUI(card, 'split', 'auto');
     autoFixedYears++;

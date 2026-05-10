@@ -270,10 +270,13 @@ def cleanup_fix_duplicate_year(audit_id: int):
     text = (payload.get("text") or "").strip()
     if not text:
         return jsonify({"error": "empty text"}), 400
-    threshold = float(payload.get("min_score") or 100)
-    result = fix_duplicate_year(text, min_score=threshold)
+    threshold = float(payload.get("min_score") or 50)
+    fallback = payload.get("fallback") or "keep_second"
+    if fallback not in ("keep_second", "keep_first", "crossref_only"):
+        fallback = "keep_second"
+    result = fix_duplicate_year(text, min_score=threshold, fallback=fallback)
     if result is None:
-        return jsonify({"fixed": None, "reason": "no high-confidence Crossref match"})
+        return jsonify({"fixed": None, "reason": "no duplicate-year pattern (or crossref_only mode and no match)"})
     return jsonify(result)
 
 

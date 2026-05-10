@@ -1,39 +1,61 @@
-"""Resolve duplicate-year citations against Crossref.
+"""Resolve duplicate-year citations against Crossref, with positional fallbacks.
 
 GROBID sometimes extracts the publication year twice in adjacent positions:
 
     Ore, Ersula. 2019. 2015. "They Call Me Dr. Ore." Present Tense 5, no. 2: 1-6.
 
-Without external information we can't tell which of the two years is the
-real publication year (here it's 2015 — the 2019 is a scrape artifact).
-This module strips the duplicate-year sequence from the text, queries
-Crossref for a canonical match, and — only when the canonical year matches
-one of the two candidates with high confidence — returns a corrected
-citation string with the duplicate removed.
+Three resolution paths, in order:
 
-Conservative by design: if Crossref returns a third year (matching neither
-candidate), or if the match score is below the configured threshold, the
-function returns None so the cleanup tool falls back to manual review.
+  1. Same-year duplicates (e.g., "D'Angelo, Frank. 1974. 1974.") are
+     dedup'd unconditionally — no risk and no API call needed.
+  2. Different-year duplicates are sent to Crossref. If Crossref returns
+     a high-confidence match whose canonical year matches one of the two
+     candidates, that year wins.
+  3. When Crossref disagrees (different year) or returns nothing, fall
+     back to a positional heuristic. The configured strategy is one of:
+       - 'keep_second' (default): the second year is positionally next
+          to the title in Chicago author-date format, so it's the
+          canonical publication year in most cases (~7 of 9 verified
+          examples on the Reflections backfill).
+       - 'keep_first':  the opposite — keep the leading year.
+       - 'crossref_only': refuse to auto-fix, leave for manual review.
 """
 from __future__ import annotations
 
 import re
-from typing import Any
+from typing import Any, Literal
 
 from auditor.rules.duplicate_year import DUPLICATE_YEAR_RE
 from .crossref_match import match_citation
 
 
 DEFAULT_MIN_SCORE = 50.0
+FallbackStrategy = Literal["keep_second", "keep_first", "crossref_only"]
 
 
-def fix_duplicate_year(text: str, min_score: float = DEFAULT_MIN_SCORE) -> dict[str, Any] | None:
-    """Return a corrected citation if Crossref confirms the canonical year.
+def _rewrite(text: str, m: re.Match, kept_year: str) -> str:
+    """Replace the matched duplicate-year sequence with a single year."""
+    corrected = (
+        text[: m.start()].rstrip()
+        + (" " if m.start() > 0 else "")
+        + f"{kept_year}. "
+        + text[m.end():].lstrip()
+    )
+    return re.sub(r"\s+", " ", corrected).strip()
 
-    Output: {'fixed': '<corrected text>', 'match': <crossref result>,
-             'kept_year': '<year>', 'dropped_year': '<year>'}.
-    Returns None when no duplicate-year pattern, no Crossref match,
-    low confidence, or Crossref's year matches neither candidate.
+
+def fix_duplicate_year(
+    text: str,
+    min_score: float = DEFAULT_MIN_SCORE,
+    fallback: FallbackStrategy = "keep_second",
+) -> dict[str, Any] | None:
+    """Return a corrected citation, or None if no duplicate-year pattern
+    is present (or if `fallback='crossref_only'` and Crossref can't help).
+
+    Output: {'fixed': '<corrected text>', 'match': <crossref result | None>,
+             'kept_year': '<year>', 'dropped_year': '<year>',
+             'method': 'dedup_same_year' | 'crossref_verified' |
+                       'fallback_keep_second' | 'fallback_keep_first'}.
     """
     text = text.strip()
     m = DUPLICATE_YEAR_RE.search(text)
@@ -43,45 +65,48 @@ def fix_duplicate_year(text: str, min_score: float = DEFAULT_MIN_SCORE) -> dict[
     first = m.group("first")
     second = m.group("second")
 
-    # Build a clean query by stripping just the duplicate-year sequence.
+    # Path 1: same year repeated — unambiguous dedup, no Crossref call.
+    if first == second:
+        return {
+            "fixed": _rewrite(text, m, first),
+            "match": None,
+            "kept_year": first,
+            "dropped_year": first,
+            "method": "dedup_same_year",
+        }
+
+    # Path 2: different years — query Crossref with a clean text.
     cleaned_query = (text[: m.start()] + " " + text[m.end():]).strip()
     cleaned_query = re.sub(r"\s+", " ", cleaned_query)
-
     match = match_citation(cleaned_query)
-    if match is None:
-        return None
-    if match.get("error"):
-        return None
-    score = match.get("score") or 0
-    if score < min_score:
-        return None
 
-    canonical = match.get("year")
-    if canonical is None:
+    if match and not match.get("error"):
+        score = match.get("score") or 0
+        canonical = match.get("year")
+        if score >= min_score and canonical is not None:
+            canonical_str = str(canonical)
+            if canonical_str in (first, second):
+                dropped = first if canonical_str == second else second
+                return {
+                    "fixed": _rewrite(text, m, canonical_str),
+                    "match": match,
+                    "kept_year": canonical_str,
+                    "dropped_year": dropped,
+                    "method": "crossref_verified",
+                }
+
+    # Path 3: Crossref couldn't disambiguate — apply positional fallback.
+    if fallback == "crossref_only":
         return None
-    canonical_str = str(canonical)
-
-    if canonical_str not in (first, second):
-        # Crossref disagrees with both candidates — too risky to silently
-        # rewrite. Let the user decide.
-        return None
-
-    dropped = first if canonical_str == second else second
-
-    # Replace the entire "YYYY. YYYY." (or comma-variant) sequence with
-    # just the canonical year + a period and a space, preserving whatever
-    # follows in the original text.
-    corrected = (
-        text[: m.start()].rstrip()
-        + (" " if m.start() > 0 else "")
-        + f"{canonical_str}. "
-        + text[m.end():].lstrip()
-    )
-    corrected = re.sub(r"\s+", " ", corrected).strip()
+    if fallback == "keep_first":
+        kept, dropped = first, second
+    else:  # 'keep_second' (default)
+        kept, dropped = second, first
 
     return {
-        "fixed": corrected,
+        "fixed": _rewrite(text, m, kept),
         "match": match,
-        "kept_year": canonical_str,
+        "kept_year": kept,
         "dropped_year": dropped,
+        "method": f"fallback_{fallback}",
     }
