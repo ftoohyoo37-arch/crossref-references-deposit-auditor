@@ -190,6 +190,11 @@ These rules run once per `<citation>` element. They use namespace-agnostic local
 - **Parameters:** `min_chars` (default 30) — skip very short citations.
 - **Notes:** distinguishes "same author" vs. "entry separator" usage by inspecting the leading characters of the chunk after each marker — `^Surname,\s+Initial` patterns trigger split-only mode.
 
+##### `footnote_artifact` — footnote captured as citation
+- **Default severity:** `warning`
+- **What it checks:** flags `<unstructured_citation>` values that begin with a footnote back-reference glyph — `↑` (U+2191), `↩` (U+21A9 leftward-with-hook), or `⁋` (U+204B reversed pilcrow). These are footnotes accidentally pulled into the reference list by GROBID, not bibliographic entries. Anchored to the start of the citation (after optional whitespace) so that real citations containing the arrow elsewhere in their text don't false-positive.
+- **Cleanup behavior:** the cleanup tool's bulk auto-decide handles these in Pass 1 alongside `paragraph_shaped` cards — both are auto-marked **delete**, no Crossref query needed. Measured on the Reflections backfill, this rule caught 8 footnote artifacts.
+
 ##### `paragraph_shaped` — body text detection
 - **Default severity:** `warning`
 - **What it checks:** flags citations that look like body text or paragraphs accidentally captured by the scraper, rather than bibliographic entries. Triggers only when **all** of these hold: (1) the text has at least `min_long_sentences` (default 3) sentences of 8+ words, (2) it doesn't open with an author-block pattern, (3) it has no `(YYYY` marker anywhere. Conservative by design — if any of those three conditions fails, the rule stays silent.
@@ -295,7 +300,7 @@ Powered by the public Crossref REST API at `https://api.crossref.org/works`. The
 
 The **Bulk auto-decide via Crossref** card at the top of the cleanup page automates decisions across all flagged citations. Three passes run sequentially:
 
-**Pass 1 (instant) — Paragraph auto-delete.** Every card flagged by the `paragraph_shaped` rule is auto-marked **delete**, no Crossref query needed.
+**Pass 1 (instant) — Garbage auto-delete.** Every card flagged by either `paragraph_shaped` (body text captured as a citation) or `footnote_artifact` (text starting with a footnote arrow `↑`/`↩`/`⁋`) is auto-marked **delete**, no Crossref query needed. The decision notes record which rule triggered the deletion.
 
 **Pass 1.3 (~500 ms per card) — Duplicate-year auto-fix.** Every card flagged by `duplicate_year_tokens` is sent through `cleanup.fix_duplicate_year()`: strip the duplicate-year sequence, query Crossref, and if Crossref's canonical year matches one of the two candidates with confidence ≥ threshold, auto-save a `split` decision with the corrected text (kept year + dropped year recorded in the decision notes). Cards where Crossref disagrees with both candidates or returns low confidence fall through to manual review.
 

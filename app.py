@@ -199,6 +199,7 @@ def cleanup(audit_id: int):
         "repeat_author_marker",
         "journal_footer_suffix",
         "duplicate_year_tokens",
+        "footnote_artifact",
     }
     findings = [f for f in db.get_findings(audit_id) if f.rule_id in cleanup_rule_ids]
 

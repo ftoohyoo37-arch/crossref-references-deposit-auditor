@@ -71,6 +71,7 @@ def _import_all_rules() -> None:
         repeat_author_marker,
         journal_footer,
         duplicate_year,
+        footnote_artifact,
     )
 
 

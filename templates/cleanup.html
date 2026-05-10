@@ -193,19 +193,23 @@ document.getElementById('auto-run').addEventListener('click', async () => {
   autoCancel = false;
   let autoDeleted = 0, acceptedSplit = 0, acceptedKeep = 0, lowConf = 0, skipped = 0, fallbackApplied = 0;
 
-  // ---- Pass 1: auto-delete paragraph-shaped citations (no Crossref needed) ----
-  progress.textContent = 'Pass 1: scanning for paragraph-shaped citations…';
+  // ---- Pass 1: auto-delete obvious garbage (paragraphs, footnotes) ----
+  progress.textContent = 'Pass 1: scanning for paragraph-shaped citations and footnote artifacts…';
   for (const card of cards) {
     if (autoCancel) break;
     const decided = card.dataset.action && card.dataset.action !== 'pending';
     if (decided && !recheck) { continue; }
     const rules = (card.dataset.rules || '').split(',').filter(Boolean);
-    if (!rules.includes('paragraph_shaped')) continue;
+    const isParagraph = rules.includes('paragraph_shaped');
+    const isFootnote  = rules.includes('footnote_artifact');
+    if (!isParagraph && !isFootnote) continue;
+    const reason = isFootnote ? 'footnote_artifact' : 'paragraph_shaped';
     await postJSON(decisionUrl, {
       line: parseInt(card.dataset.line),
       citation_key: card.dataset.key || null,
       action: 'delete',
       decided_by: 'auto',
+      notes: `auto-deleted (${reason})`,
     });
     applyDecisionUI(card, 'delete', 'auto');
     autoDeleted++;
