@@ -174,6 +174,11 @@ These rules run once per `<citation>` element. They use namespace-agnostic local
 - **Notes:** This is the rule that drives most cleanup work. Tuning the thresholds on the Settings page lets you reduce noise on journals with consistently long unstructured citations.
 - **Type-aware suppression:** sub-checks 3, 4, and 5 are skipped when [`auditor.citation_types.detect_type()`](auditor/citation_types.py) recognizes the citation as a non-Crossref-indexed source (`conference`, `website`, or `software`). These types legitimately have multiple year tokens (publication date + access date), longer text (full URLs and access notes), and embedded punctuation. The empty-text and fragment checks still fire for all citations. Measured on the Reflections backfill, this suppression cut total findings from 1,244 to 929 with no false negatives observed.
 
+##### `journal_footer_suffix` — journal page footer glued onto citation
+- **Default severity:** `warning`
+- **What it checks:** flags `<unstructured_citation>` values whose tail matches a journal page footer pattern: a proper-noun journal name, a pipe character, the literal word "Volume" + digits, ", Issue " + digits, optionally followed by ", Spring|Summer|Fall|Winter|Autumn|<Month> YYYY". The full pattern is anchored to end-of-string. Real bibliographic entries use compact forms like "5(2)" or "vol. 5, no. 2"; the spelled-out "Volume X, Issue Y" with a season is distinctly typesetting-footer language and almost never appears inside a citation.
+- **Cleanup behavior:** the cleanup tool's bulk auto-decide runs a Pass 1.5 dedicated to these cards: it auto-saves a `split` decision with the splitter's pre-stripped chunks (which have the footer removed). No manual review needed — the tool fixes them automatically. Measured on the Reflections backfill, this caught 25 footer-bleed cases including running headers from Reflections, NYT, Wired, and several other sources.
+
 ##### `repeat_author_marker` — repeat-author placeholder detection
 - **Default severity:** `warning`
 - **What it checks:** flags `<unstructured_citation>` values containing a bibliography-style repeat-author marker — three or more underscores (`___`), three or more hyphens (`---`), or two or more em/en-dashes (`——`, `––`) standing alone as a token. These markers appear in glued multi-reference citations where later refs use the marker as a stand-in for the previous author. The cleanup tool's splitter detects these markers and substitutes them with the leading author block when the chunk that follows has no author of its own; if the following chunk *does* have its own author block (the marker was a bibliography-entry separator between *different* authors, not a same-author placeholder), the splitter splits but doesn't substitute.
@@ -287,7 +292,9 @@ The **Bulk auto-decide via Crossref** card at the top of the cleanup page automa
 
 **Pass 1 (instant) — Paragraph auto-delete.** Every card flagged by the `paragraph_shaped` rule is auto-marked **delete**, no Crossref query needed.
 
-**Pass 1.5 (instant) — Recognized-type auto-keep.** Every card whose `<unstructured_citation>` text is identified by `detect_type()` as a conference presentation, news/website article, or software/code repo is auto-marked **keep**. Crossref doesn't index these, so a REST query would return no match and waste time. The card's notes record which type was detected (e.g., `auto-kept (website)`).
+**Pass 1.5 (instant) — Journal-footer auto-strip.** Every card flagged by `journal_footer_suffix` is auto-marked **split** with the splitter's pre-stripped chunks. The splitter has already removed the trailing footer (e.g., `Reflections | Volume 24, Issue 2, Spring 2025`); this pass simply commits that change as a decision. No Crossref query needed.
+
+**Pass 1.7 (instant) — Recognized-type auto-keep.** Every card whose `<unstructured_citation>` text is identified by `detect_type()` as a conference presentation, news/website article, or software/code repo is auto-marked **keep**. Crossref doesn't index these, so a REST query would return no match and waste time. The card's notes record which type was detected (e.g., `auto-kept (website)`).
 
 **Pass 2 (~500 ms per chunk) — Crossref-verified split or keep.** For each remaining card:
 - Query Crossref for each proposed chunk.

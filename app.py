@@ -192,8 +192,13 @@ def cleanup(audit_id: int):
         flash("Original XML for this audit isn't available — re-upload to enable cleanup.", "error")
         return redirect(url_for("report", audit_id=audit_id))
 
-    # Pull warnings from rules that flag glued/garbage citations
-    cleanup_rule_ids = {"unstructured_length", "paragraph_shaped", "repeat_author_marker"}
+    # Pull warnings from rules that flag glued/garbage/footer-bleed citations
+    cleanup_rule_ids = {
+        "unstructured_length",
+        "paragraph_shaped",
+        "repeat_author_marker",
+        "journal_footer_suffix",
+    }
     findings = [f for f in db.get_findings(audit_id) if f.rule_id in cleanup_rule_ids]
 
     # De-duplicate by citation_line so each citation appears once even if it

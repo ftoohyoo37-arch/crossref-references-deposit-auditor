@@ -69,6 +69,7 @@ def _import_all_rules() -> None:
         encoding,
         paragraph_shaped,
         repeat_author_marker,
+        journal_footer,
     )
 
 

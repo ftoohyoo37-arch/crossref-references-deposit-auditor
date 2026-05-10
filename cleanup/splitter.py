@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import re
 
+from auditor.journal_footer import strip_footer
+
 
 YEAR_PARENS_RE = re.compile(r"\((1[5-9]\d{2}|20\d{2}|2100)[a-z]?\)")
 # Sentence-end candidates: period followed by space then capital letter,
@@ -152,14 +154,22 @@ def _split_at_markers(text: str) -> list[str]:
 def propose_splits(text: str, max_splits: int = 5) -> list[str]:
     """Return the citation split into chunks at proposed boundaries.
 
-    Two passes: first attempt to split on repeat-author markers (___, ---, ——),
-    substituting the marker with the previous chunk's author block. If that
-    yields a multi-chunk result, return it. Otherwise fall back to the
-    year-anchored sentence-boundary heuristic.
+    Three passes: first strip any trailing journal-page footer (e.g.,
+    "Reflections | Volume 24, Issue 2, Spring 2025"), since these are
+    typesetting artifacts pulled in by GROBID rather than citation text.
+    Then attempt to split on repeat-author markers (___, ---, ——),
+    substituting the marker with the previous chunk's author block. If
+    that yields a multi-chunk result, return it. Otherwise fall back to
+    the year-anchored sentence-boundary heuristic.
 
-    If no good split points are found, returns [text] unchanged.
+    Returns [cleaned_text] if a footer was stripped but no further splits
+    apply (single chunk that differs from the original). Returns [text]
+    unchanged when no footer and no split points exist.
     """
     text = text.strip()
+
+    # Pass 0: strip journal-page footer suffix if present
+    text, _footer = strip_footer(text)
 
     # Pass 1: repeat-author markers
     marker_chunks = _split_at_markers(text)
