@@ -14,6 +14,7 @@ from __future__ import annotations
 import re
 
 from auditor.journal_footer import strip_footer
+from auditor.notes_section import strip_notes_section
 
 
 YEAR_PARENS_RE = re.compile(r"\((1[5-9]\d{2}|20\d{2}|2100)[a-z]?\)")
@@ -168,7 +169,10 @@ def propose_splits(text: str, max_splits: int = 5) -> list[str]:
     """
     text = text.strip()
 
-    # Pass 0: strip journal-page footer suffix if present
+    # Pass 0a: strip an appended Notes/Footnotes section if present
+    text, _notes = strip_notes_section(text)
+
+    # Pass 0b: strip journal-page footer suffix if present
     text, _footer = strip_footer(text)
 
     # Pass 1: repeat-author markers

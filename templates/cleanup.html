@@ -254,29 +254,34 @@ document.getElementById('auto-run').addEventListener('click', async () => {
     autoFixedYears++;
   }
 
-  // ---- Pass 1.5: auto-strip journal-page footer suffixes ----
+  // ---- Pass 1.5: auto-strip trailing artifacts (footers, Notes sections) ----
   // Citations flagged by journal_footer_suffix had a footer like
   // "Reflections | Volume 24, Issue 2, Spring 2025" appended to them.
-  // The splitter has already stripped it, so the proposed_splits hold
-  // the cleaned version — save them as a split decision automatically.
-  progress.textContent = 'Pass 1.5: auto-stripping journal page footers…';
+  // Citations flagged by notes_section_appended had a "Notes ↑1 …"
+  // section glued onto the last works-cited entry. In both cases the
+  // splitter has already stripped the artifact, so the proposed_splits
+  // hold just the cleaned real citation — save them automatically.
+  progress.textContent = 'Pass 1.5: auto-stripping trailing artifacts (footers, Notes sections)…';
   let autoStripped = 0;
   for (const card of cards) {
     if (autoCancel) break;
     const decided = card.dataset.action && card.dataset.action !== 'pending';
     if (decided && !recheck) { continue; }
     const rules = (card.dataset.rules || '').split(',').filter(Boolean);
-    if (!rules.includes('journal_footer_suffix')) continue;
+    const isFooter = rules.includes('journal_footer_suffix');
+    const isNotes  = rules.includes('notes_section_appended');
+    if (!isFooter && !isNotes) continue;
     const splitsBlock = card.querySelector('.cleanup-splits');
     const chunks = JSON.parse(splitsBlock.dataset.proposed || '[]');
     if (chunks.length === 0) continue;
+    const reason = isNotes ? 'notes_section_appended' : 'journal_footer_suffix';
     await postJSON(decisionUrl, {
       line: parseInt(card.dataset.line),
       citation_key: card.dataset.key || null,
       action: 'split',
       split_chunks: chunks,
       decided_by: 'auto',
-      notes: 'auto-stripped (journal_footer_suffix)',
+      notes: `auto-stripped (${reason})`,
     });
     applyDecisionUI(card, 'split', 'auto');
     autoStripped++;

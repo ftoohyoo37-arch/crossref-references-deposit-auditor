@@ -72,6 +72,7 @@ def _import_all_rules() -> None:
         journal_footer,
         duplicate_year,
         footnote_artifact,
+        notes_section,
     )
 
 
