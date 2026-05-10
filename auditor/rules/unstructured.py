@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 
+from ..citation_types import detect_type
 from ..models import Finding, ParamMeta, RuleMeta, Severity
 from . import register_citation_rule
 from ._util import citation_key, find_child, short_snippet, text_of
@@ -87,6 +88,13 @@ def unstructured_length(elem, ctx) -> list[Finding]:
             citation_key=citation_key(elem),
         )]
 
+    # If this citation looks like a non-Crossref-indexed source (conference
+    # presentation, news/website article, software/code repo), skip the
+    # length and multi-year heuristics entirely — these are normal for
+    # those types (publication date + access date is two years; URLs and
+    # access notes legitimately make the text long).
+    cite_type = detect_type(text)
+
     words = text.split()
     findings: list[Finding] = []
 
@@ -99,7 +107,7 @@ def unstructured_length(elem, ctx) -> list[Finding]:
             citation_key=citation_key(elem),
             snippet=short_snippet(text),
         ))
-    elif len(words) > max_words:
+    elif len(words) > max_words and cite_type is None:
         findings.append(Finding(
             rule_id=META.id,
             severity=sev,
@@ -109,19 +117,20 @@ def unstructured_length(elem, ctx) -> list[Finding]:
             snippet=short_snippet(text),
         ))
 
-    years = _real_year_tokens(text)
-    if len(years) > max_year_count:
-        findings.append(Finding(
-            rule_id=META.id,
-            severity=sev,
-            message=f"Unstructured citation contains {len(years)} year-like tokens ({', '.join(years)}). Likely two or more references glued together.",
-            line=elem.sourceline,
-            citation_key=citation_key(elem),
-            snippet=short_snippet(text),
-        ))
+    if cite_type is None:
+        years = _real_year_tokens(text)
+        if len(years) > max_year_count:
+            findings.append(Finding(
+                rule_id=META.id,
+                severity=sev,
+                message=f"Unstructured citation contains {len(years)} year-like tokens ({', '.join(years)}). Likely two or more references glued together.",
+                line=elem.sourceline,
+                citation_key=citation_key(elem),
+                snippet=short_snippet(text),
+            ))
 
     semis = text.count(";")
-    if semis > max_semis:
+    if semis > max_semis and cite_type is None:
         findings.append(Finding(
             rule_id=META.id,
             severity=sev,

@@ -18,6 +18,7 @@ from auditor import audit
 from auditor.core import detect_namespace
 from auditor.models import AuditorConfig, RuleConfig
 from auditor import rules as rules_pkg
+from auditor.citation_types import detect_type
 from auditor.rules._util import find_child, text_of
 from cleanup import propose_splits, match_citation, apply_decisions, count_changes
 from exporters import EXPORTERS
@@ -218,6 +219,7 @@ def cleanup(audit_id: int):
         proposed = propose_splits(full_text)
         decision = decisions.get(line)
         rule_ids = sorted({f.rule_id for f in by_line[line]})
+        cite_type = detect_type(full_text)
         cards.append({
             "line": line,
             "citation_key": key,
@@ -226,6 +228,7 @@ def cleanup(audit_id: int):
             "rule_ids": rule_ids,
             "proposed_splits": proposed,
             "decision": decision,
+            "citation_type": cite_type,
         })
 
     summary = count_changes(decisions)

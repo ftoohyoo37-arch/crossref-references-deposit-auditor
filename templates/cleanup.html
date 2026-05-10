@@ -83,10 +83,12 @@
          data-key="{{ c.citation_key or '' }}"
          data-rules="{{ c.rule_ids|join(',') }}"
          data-action="{{ c.decision.action if c.decision else 'pending' }}"
-         data-source="{{ src if c.decision else '' }}">
+         data-source="{{ src if c.decision else '' }}"
+         data-citation-type="{{ c.citation_type or '' }}">
   <div class="cleanup-head">
     <code>{{ c.citation_key or 'no key' }}</code> <span class="muted">line {{ c.line }}</span>
     {% if 'paragraph_shaped' in c.rule_ids %}<span class="badge badge-error" style="margin-left:0.5rem">paragraph-shaped</span>{% endif %}
+    {% if c.citation_type %}<span class="badge badge-info" style="margin-left:0.5rem">type: {{ c.citation_type }}</span>{% endif %}
     {% if c.decision %}<span class="badge badge-{{ {'keep':'info','delete':'error','split':'warning'}[c.decision.action] }}">{{ src }}: {{ c.decision.action }}</span>{% endif %}
   </div>
   <div class="cleanup-issues">
@@ -208,6 +210,28 @@ document.getElementById('auto-run').addEventListener('click', async () => {
     autoDeleted++;
   }
 
+  // ---- Pass 1.5: auto-keep recognized non-Crossref-indexed types ----
+  // Conference presentations, news/website articles, and software/code
+  // repos won't match Crossref's index — skip the round-trip and keep them.
+  progress.textContent = 'Pass 1.5: auto-keeping recognized non-Crossref types…';
+  let autoKeptType = 0;
+  for (const card of cards) {
+    if (autoCancel) break;
+    const decided = card.dataset.action && card.dataset.action !== 'pending';
+    if (decided && !recheck) { continue; }
+    const ctype = card.dataset.citationType;
+    if (!ctype) continue;
+    await postJSON(decisionUrl, {
+      line: parseInt(card.dataset.line),
+      citation_key: card.dataset.key || null,
+      action: 'keep',
+      decided_by: 'auto',
+      notes: `auto-kept (${ctype})`,
+    });
+    applyDecisionUI(card, 'keep', 'auto');
+    autoKeptType++;
+  }
+
   // ---- Pass 2: Crossref-verified split/keep ----
   for (let i = 0; i < cards.length; i++) {
     if (autoCancel) { progress.textContent += ' [cancelled]'; break; }
@@ -271,6 +295,7 @@ document.getElementById('auto-run').addEventListener('click', async () => {
     : `<b>${fallbackApplied}</b> low-confidence cards auto-marked <b>${fallback}</b>`;
   progress.innerHTML =
     `Done. Auto-deleted <b>${autoDeleted}</b> paragraph-shaped, ` +
+    `auto-kept <b>${autoKeptType}</b> recognized non-Crossref types (conference / website / software), ` +
     `auto-accepted <b>${acceptedSplit}</b> split(s) and <b>${acceptedKeep}</b> keep(s); ` +
     `${lowConfMsg}; skipped <b>${skipped}</b>. ` +
     `<a href="">Reload</a> to see updated chunk text in the split editors.`;

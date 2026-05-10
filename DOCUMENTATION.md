@@ -172,6 +172,7 @@ These rules run once per `<citation>` element. They use namespace-agnostic local
   5. More than `max_semicolons` (default 2) semicolons.
 - **Parameters:** `min_words`, `max_words`, `max_year_count`, `max_semicolons`.
 - **Notes:** This is the rule that drives most cleanup work. Tuning the thresholds on the Settings page lets you reduce noise on journals with consistently long unstructured citations.
+- **Type-aware suppression:** sub-checks 3, 4, and 5 are skipped when [`auditor.citation_types.detect_type()`](auditor/citation_types.py) recognizes the citation as a non-Crossref-indexed source (`conference`, `website`, or `software`). These types legitimately have multiple year tokens (publication date + access date), longer text (full URLs and access notes), and embedded punctuation. The empty-text and fragment checks still fire for all citations. Measured on the Reflections backfill, this suppression cut total findings from 1,244 to 929 with no false negatives observed.
 
 ##### `repeat_author_marker` — repeat-author placeholder detection
 - **Default severity:** `warning`
@@ -282,9 +283,11 @@ Powered by the public Crossref REST API at `https://api.crossref.org/works`. The
 
 ### 5.4 Bulk auto-decide
 
-The **Bulk auto-decide via Crossref** card at the top of the cleanup page automates decisions across all flagged citations. Two passes run sequentially:
+The **Bulk auto-decide via Crossref** card at the top of the cleanup page automates decisions across all flagged citations. Three passes run sequentially:
 
 **Pass 1 (instant) — Paragraph auto-delete.** Every card flagged by the `paragraph_shaped` rule is auto-marked **delete**, no Crossref query needed.
+
+**Pass 1.5 (instant) — Recognized-type auto-keep.** Every card whose `<unstructured_citation>` text is identified by `detect_type()` as a conference presentation, news/website article, or software/code repo is auto-marked **keep**. Crossref doesn't index these, so a REST query would return no match and waste time. The card's notes record which type was detected (e.g., `auto-kept (website)`).
 
 **Pass 2 (~500 ms per chunk) — Crossref-verified split or keep.** For each remaining card:
 - Query Crossref for each proposed chunk.
