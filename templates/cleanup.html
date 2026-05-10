@@ -11,9 +11,16 @@
     <div><span class="label">Delete</span><span class="sev-error">{{ summary.delete }}</span></div>
     <div><span class="label">Split</span><span>{{ summary.split }} (→ {{ summary.split_into }} new)</span></div>
   </div>
-  <p>
-    <a class="btn" href="{{ url_for('cleanup_download', audit_id=meta.id) }}">Download cleaned XML</a>
-  </p>
+  <div class="download-row">
+    <a class="btn btn-primary" href="{{ url_for('cleanup_download', audit_id=meta.id) }}">
+      &darr; Download cleaned XML
+    </a>
+    <span class="muted">
+      Applies all saved decisions (keep / delete / split) to the original deposit.
+      File saves to your browser's Downloads folder as
+      <code>{{ meta.filename.rsplit('.',1)[0] }}.cleaned.xml</code>.
+    </span>
+  </div>
 </section>
 
 <section class="card auto-decide-card">

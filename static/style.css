@@ -71,6 +71,15 @@ th { background: #f4f1ec; font-family: -apple-system, system-ui, sans-serif; fon
 .sev-info { color: var(--info-fg); font-weight: bold; }
 
 .exports { margin-top: 1rem; display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+.btn-primary { background: var(--accent-hover); font-weight: bold; }
+.btn-primary:hover { background: #2f1f08; }
+.download-row {
+  margin-top: 1rem; padding: 0.75rem; background: #f4f1ec; border-radius: 4px;
+  display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap;
+}
+.download-row .btn { white-space: nowrap; }
+.download-row .muted { font-size: 0.9rem; }
+.download-row code { background: #fff; padding: 0.05rem 0.3rem; border-radius: 3px; font-size: 0.85rem; }
 
 .filters { display: flex; gap: 1rem; align-items: center; margin: 0.75rem 0; font-size: 0.9rem; }
 .filters select { font: inherit; }

@@ -23,6 +23,10 @@
     <a class="btn" href="{{ url_for('export', audit_id=meta.id, fmt='pdf') }}">PDF</a>
     <span class="label" style="margin-left:1.5rem">Fix:</span>
     <a class="btn" href="{{ url_for('cleanup', audit_id=meta.id) }}">Clean up &rarr;</a>
+    <a class="btn btn-primary" href="{{ url_for('cleanup_download', audit_id=meta.id) }}"
+       title="Apply saved cleanup decisions to the original XML and download the result">
+      &darr; Download cleaned XML
+    </a>
   </div>
 </section>
 
