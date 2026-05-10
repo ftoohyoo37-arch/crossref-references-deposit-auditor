@@ -70,6 +70,7 @@ def _import_all_rules() -> None:
         paragraph_shaped,
         repeat_author_marker,
         journal_footer,
+        duplicate_year,
     )
 
 

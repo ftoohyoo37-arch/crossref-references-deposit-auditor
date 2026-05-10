@@ -20,7 +20,7 @@ from auditor.models import AuditorConfig, RuleConfig
 from auditor import rules as rules_pkg
 from auditor.citation_types import detect_type
 from auditor.rules._util import find_child, text_of
-from cleanup import propose_splits, match_citation, apply_decisions, count_changes
+from cleanup import propose_splits, match_citation, apply_decisions, count_changes, fix_duplicate_year
 from exporters import EXPORTERS
 
 import io
@@ -198,6 +198,7 @@ def cleanup(audit_id: int):
         "paragraph_shaped",
         "repeat_author_marker",
         "journal_footer_suffix",
+        "duplicate_year_tokens",
     }
     findings = [f for f in db.get_findings(audit_id) if f.rule_id in cleanup_rule_ids]
 
@@ -254,6 +255,24 @@ def cleanup_match(audit_id: int):
         return jsonify({"error": "empty text"}), 400
     result = match_citation(text)
     return jsonify(result or {"empty": True})
+
+
+@app.route("/cleanup/<int:audit_id>/fix_duplicate_year", methods=["POST"])
+def cleanup_fix_duplicate_year(audit_id: int):
+    """AJAX: try to auto-resolve a duplicate-year citation against Crossref.
+    Returns {'fixed': '<corrected text>', 'match': {...}, 'kept_year': '<y>',
+    'dropped_year': '<y>'} on success; {'fixed': null, 'reason': '...'} when
+    confidence is too low or Crossref disagrees with both candidates.
+    """
+    payload = request.json or {}
+    text = (payload.get("text") or "").strip()
+    if not text:
+        return jsonify({"error": "empty text"}), 400
+    threshold = float(payload.get("min_score") or 100)
+    result = fix_duplicate_year(text, min_score=threshold)
+    if result is None:
+        return jsonify({"fixed": None, "reason": "no high-confidence Crossref match"})
+    return jsonify(result)
 
 
 @app.route("/cleanup/<int:audit_id>/decision", methods=["POST"])

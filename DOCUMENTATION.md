@@ -174,6 +174,11 @@ These rules run once per `<citation>` element. They use namespace-agnostic local
 - **Notes:** This is the rule that drives most cleanup work. Tuning the thresholds on the Settings page lets you reduce noise on journals with consistently long unstructured citations.
 - **Type-aware suppression:** sub-checks 3, 4, and 5 are skipped when [`auditor.citation_types.detect_type()`](auditor/citation_types.py) recognizes the citation as a non-Crossref-indexed source (`conference`, `website`, or `software`). These types legitimately have multiple year tokens (publication date + access date), longer text (full URLs and access notes), and embedded punctuation. The empty-text and fragment checks still fire for all citations. Measured on the Reflections backfill, this suppression cut total findings from 1,244 to 929 with no false negatives observed.
 
+##### `duplicate_year_tokens` — two adjacent publication years
+- **Default severity:** `warning`
+- **What it checks:** flags `<unstructured_citation>` values containing two 4-digit years separated by only a period or comma plus whitespace (`Ore, Ersula. 2019. 2015. "They Call Me Dr. Ore." …`). This is a common GROBID extraction artifact where the publication year is duplicated.
+- **Cleanup behavior:** the cleanup tool's bulk auto-decide runs a Pass 1.3 dedicated to these cards. For each, it strips the duplicate-year sequence to build a clean Crossref query, sends the query, and — only when Crossref returns a high-confidence match (score ≥ threshold, default 50) AND the canonical year matches one of the two candidates — auto-saves a `split` decision with the corrected single-chunk text. If Crossref returns a third year (matching neither candidate) or low confidence, the card falls through to manual review. Both safety guards must pass; the auto-fix is conservative by design. Measured on the Reflections backfill, this audit rule caught 57 duplicate-year cases.
+
 ##### `journal_footer_suffix` — journal page footer glued onto citation
 - **Default severity:** `warning`
 - **What it checks:** flags `<unstructured_citation>` values whose tail matches a journal page footer pattern: a proper-noun journal name, a pipe character, the literal word "Volume" + digits, ", Issue " + digits, optionally followed by ", Spring|Summer|Fall|Winter|Autumn|<Month> YYYY". The full pattern is anchored to end-of-string. Real bibliographic entries use compact forms like "5(2)" or "vol. 5, no. 2"; the spelled-out "Volume X, Issue Y" with a season is distinctly typesetting-footer language and almost never appears inside a citation.
@@ -291,6 +296,8 @@ Powered by the public Crossref REST API at `https://api.crossref.org/works`. The
 The **Bulk auto-decide via Crossref** card at the top of the cleanup page automates decisions across all flagged citations. Three passes run sequentially:
 
 **Pass 1 (instant) — Paragraph auto-delete.** Every card flagged by the `paragraph_shaped` rule is auto-marked **delete**, no Crossref query needed.
+
+**Pass 1.3 (~500 ms per card) — Duplicate-year auto-fix.** Every card flagged by `duplicate_year_tokens` is sent through `cleanup.fix_duplicate_year()`: strip the duplicate-year sequence, query Crossref, and if Crossref's canonical year matches one of the two candidates with confidence ≥ threshold, auto-save a `split` decision with the corrected text (kept year + dropped year recorded in the decision notes). Cards where Crossref disagrees with both candidates or returns low confidence fall through to manual review.
 
 **Pass 1.5 (instant) — Journal-footer auto-strip.** Every card flagged by `journal_footer_suffix` is auto-marked **split** with the splitter's pre-stripped chunks. The splitter has already removed the trailing footer (e.g., `Reflections | Volume 24, Issue 2, Spring 2025`); this pass simply commits that change as a decision. No Crossref query needed.
 
