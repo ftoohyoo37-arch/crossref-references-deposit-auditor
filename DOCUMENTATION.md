@@ -349,15 +349,42 @@ A 7,000-citation file with ~1,400 cleanup cards completes in roughly 12–15 min
 
 ### 5.5 Filtering and sorting cards
 
-The **Filter cards** section at the top of the page provides three orthogonal controls:
+The **Filter cards** section at the top of the page provides four orthogonal controls:
 
 | Control | Options |
 | --- | --- |
 | **Status** | All / Pending only / Any decision / Auto-decided only / Manually decided only |
 | **Action** | All actions / Keep / Delete / Split |
 | **Sort** | By line number / By action (delete → split → keep → pending) / By rule (paragraph-shaped first) |
+| **Article (parent DOI)** | All articles / one specific `<doi>` from the deposit's `<doi_citations>` blocks (each block represents one article's references) |
 
 A live "Showing N of M" count updates as you change filters. Cards also receive a subtle background tint based on their action — pink for delete, yellow for split, green for keep — so the page can be visually scanned at a glance.
+
+### 5.5.1 Keyboard shortcuts
+
+Press `?` anywhere on the cleanup page (when not typing in a textarea or input) to toggle the shortcut help overlay. Available shortcuts:
+
+| Key | Action |
+| --- | --- |
+| `j` | Focus next visible card (respects current filters) |
+| `k` | Focus previous visible card |
+| `K` (shift-k) | Mark focused card as **Keep** |
+| `D` (shift-d) | Mark focused card as **Delete** (no confirmation) |
+| `S` (shift-s) | Toggle the **Split** editor on the focused card |
+| `?` | Show / hide this overlay |
+| `Esc` | Hide the overlay |
+
+The focused card gets an accent-colored outline so you can see where you are. Keyboard navigation respects the active filters.
+
+### 5.5.2 Apply-to-similar batch action
+
+After saving a manual `Keep` or `Delete` decision on a card, the cleanup page scans for other PENDING cards whose first ~50 characters match the decided card's text (whitespace-normalized, case-folded). If matches exist, a non-modal banner appears below the decided card offering one-click application of the same action to all matches. Useful for batches of identical garbage (e.g., 30 cards all starting with `Notes ↑1` from a per-article scrape) — turns N cards into one click.
+
+The action is restricted to `keep` and `delete`; `split` decisions are not batch-applied because chunk text differs per citation.
+
+### 5.5.3 Diff view per card
+
+Inside the Split editor on each card, a `Show diff vs. original` toggle reveals a two-column token-level diff: the original `<unstructured_citation>` text on the left with removed tokens highlighted in red, the proposed cleaned text (joined chunks) on the right with added tokens highlighted in green. The diff re-renders on every keystroke as you edit chunk text, so the change is visible live.
 
 ### 5.6 Downloading the cleaned XML
 
@@ -497,9 +524,17 @@ All routes are local-only by default (`127.0.0.1:5001`). Responses are HTML exce
 
 | Method | Path | Body | Returns |
 | --- | --- | --- | --- |
-| `POST` | `/cleanup/<id>/match` | `{"text": "<chunk text>"}` | Crossref match JSON: `{doi, title, authors, year, container, score, confidence, url}` or `{"empty": true}` or `{"error": "..."}`. |
+| `POST` | `/cleanup/<id>/match` | `{"text": "<chunk text>", "min_score": 50}` | Citation match JSON. Queries Crossref first; on low confidence or no result, falls back to OpenAlex. Response includes `doi, title, authors, year, container, score, confidence, url, source` (`source` indicates which backend produced the match). Returns `{"empty": true}` if neither backend matched. |
 | `POST` | `/cleanup/<id>/decision` | `{"line": 528, "citation_key": "ref52", "action": "split", "split_chunks": [...], "crossref_data": [...], "decided_by": "auto"\|"manual"}` | `{"ok": true}`. Idempotent upsert keyed by `(audit_id, citation_line)`. |
+| `POST` | `/cleanup/<id>/fix_duplicate_year` | `{"text": "<full citation text>", "min_score": 50, "fallback": "keep_second"\|"keep_first"\|"crossref_only"}` | Either `{"fixed": "<corrected text>", "match": <result>, "kept_year": "<y>", "dropped_year": "<y>", "method": "..."}` or `{"fixed": null, "reason": "..."}`. |
 | `GET`  | `/cleanup/<id>/download` | — | Generates the cleaned XML on demand and streams it as `<stem>.cleaned.xml`. |
+
+### Workflow automation endpoints
+
+| Method | Path | Body | Returns |
+| --- | --- | --- | --- |
+| `POST` | `/iterate/<id>` | `{"max_iters": 5, "min_score": 50, "year_fallback": "keep_second"}` | Runs audit → auto-decide → download → re-audit until findings stop dropping. Returns `{"final_audit_id": <id>, "history": [{"iter": N, "audit_id": <id>, "findings": <n>}, …], "iterations": <count>}`. |
+| `POST` | `/dryrun/<id>` | `{"username": "<crossref-test-login>", "password": "<password>"}` | POSTs the (cleaned, if decisions exist) XML to `https://test.crossref.org/servlet/deposit` and returns `{"status_code": <int>, "ok": <bool>, "response": "<text>"}`. Credentials are forwarded per request and never stored. Returns 400 if credentials are missing. |
 
 ---
 

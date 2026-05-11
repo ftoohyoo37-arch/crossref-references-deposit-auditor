@@ -165,9 +165,13 @@ def delete_audit(audit_id: int):
 
 # ---------- Cleanup routes ----------
 
-def _load_citation_index(xml_path: Path) -> dict[int, tuple[str | None, str | None]]:
+def _load_citation_index(xml_path: Path) -> dict[int, tuple[str | None, str | None, str | None]]:
     """Parse the deposit XML ONCE and return a mapping
-    {citation_source_line: (citation_key, unstructured_citation_text)}.
+    {citation_source_line: (citation_key, unstructured_text, parent_doi)}.
+
+    parent_doi is the <doi> child of the enclosing <doi_citations> block
+    (one article's worth of references), used to drive the per-article
+    filter on the cleanup page.
 
     Cleanup views need the text for every flagged citation; calling this
     once and looking up O(1) per card avoids re-parsing the whole tree
@@ -175,14 +179,26 @@ def _load_citation_index(xml_path: Path) -> dict[int, tuple[str | None, str | No
     """
     parser = ET.XMLParser(remove_blank_text=False)
     tree = ET.parse(str(xml_path), parser)
-    index: dict[int, tuple[str | None, str | None]] = {}
+    index: dict[int, tuple[str | None, str | None, str | None]] = {}
     for elem in tree.getroot().iter():
-        if elem.tag.rsplit("}", 1)[-1] == "citation":
-            uc = find_child(elem, "unstructured_citation")
-            text = text_of(uc) if uc is not None else None
-            line = elem.sourceline
-            if line is not None:
-                index[line] = (elem.get("key"), text)
+        if elem.tag.rsplit("}", 1)[-1] != "citation":
+            continue
+        uc = find_child(elem, "unstructured_citation")
+        text = text_of(uc) if uc is not None else None
+        line = elem.sourceline
+        if line is None:
+            continue
+        # Walk up to find the <doi_citations> ancestor and its <doi> child.
+        parent_doi: str | None = None
+        a = elem.getparent()
+        while a is not None:
+            if a.tag.rsplit("}", 1)[-1] == "doi_citations":
+                doi_el = find_child(a, "doi")
+                if doi_el is not None:
+                    parent_doi = text_of(doi_el).strip() or None
+                break
+            a = a.getparent()
+        index[line] = (elem.get("key"), text, parent_doi)
     return index
 
 
@@ -223,17 +239,20 @@ def cleanup(audit_id: int):
     xml_path = Path(row["xml_path"])
     citation_index = _load_citation_index(xml_path)  # parse once, O(1) per card
     cards: list[dict] = []
+    parent_dois: list[str] = []
     for line in sorted(by_line.keys()):
         info = citation_index.get(line)
         if info is None:
             continue
-        key, full_text = info
+        key, full_text, parent_doi = info
         if full_text is None:
             continue
         proposed = propose_splits(full_text)
         decision = decisions.get(line)
         rule_ids = sorted({f.rule_id for f in by_line[line]})
         cite_type = detect_type(full_text)
+        if parent_doi and parent_doi not in parent_dois:
+            parent_dois.append(parent_doi)
         cards.append({
             "line": line,
             "citation_key": key,
@@ -243,6 +262,7 @@ def cleanup(audit_id: int):
             "proposed_splits": proposed,
             "decision": decision,
             "citation_type": cite_type,
+            "parent_doi": parent_doi,
         })
 
     summary = count_changes(decisions)
@@ -252,6 +272,7 @@ def cleanup(audit_id: int):
         meta=_meta_dict(row),
         cards=cards,
         summary=summary,
+        parent_dois=parent_dois,
     )
 
 

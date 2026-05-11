@@ -96,6 +96,46 @@ th { background: #f4f1ec; font-family: -apple-system, system-ui, sans-serif; fon
   font-family: ui-monospace, Consolas, monospace; font-size: 0.8rem; white-space: pre-wrap;
 }
 
+/* Per-article filter dropdown gets a wider input */
+#filter-doi { max-width: 22rem; font-size: 0.85rem; }
+
+/* Apply-to-similar batch action banner */
+.similar-banner {
+  background: #f5efde; border: 1px solid #d9c98e; border-radius: 4px;
+  padding: 0.5rem 0.75rem; margin: 0.5rem 0; font-size: 0.95rem;
+}
+.similar-banner button { margin-left: 0.4rem; }
+
+/* Keyboard shortcut help overlay */
+.kbd-help {
+  position: fixed; top: 4rem; right: 1.5rem; z-index: 100;
+  background: #fff; border: 1px solid var(--border); border-radius: 5px;
+  padding: 1rem 1.25rem; box-shadow: 0 4px 16px rgba(0,0,0,0.12); max-width: 380px;
+}
+.kbd-help h3 { margin: 0 0 0.5rem 0; font-size: 1rem; }
+.kbd-help table { font-size: 0.9rem; }
+.kbd-help kbd {
+  background: #f4f1ec; border: 1px solid var(--border); border-radius: 3px;
+  padding: 0.05rem 0.4rem; font-family: ui-monospace, Consolas, monospace; font-size: 0.85em;
+}
+
+/* Focused card outline (driven by keyboard navigation) */
+.cleanup-card-focused { outline: 3px solid var(--accent); outline-offset: -1px; }
+
+/* Diff pane inside the split editor */
+.diff-toggle { margin: 0.4rem 0; font-size: 0.9rem; }
+.diff-toggle summary { cursor: pointer; }
+.diff-pane {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 0.6rem;
+  background: #fcfaf5; border: 1px solid var(--border); border-radius: 4px;
+  padding: 0.6rem; margin-top: 0.4rem;
+}
+.diff-col { font-size: 0.88rem; line-height: 1.45; word-wrap: break-word; }
+.diff-col h4 { margin: 0 0 0.3rem 0; font-size: 0.85rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.diff-rm { background: #fbe5e7; color: var(--error-fg); text-decoration: line-through; }
+.diff-add { background: #e3efe0; color: var(--ok-fg); }
+@media (max-width: 800px) { .diff-pane { grid-template-columns: 1fr; } }
+
 .filters { display: flex; gap: 1rem; align-items: center; margin: 0.75rem 0; font-size: 0.9rem; }
 .filters select { font: inherit; }
 

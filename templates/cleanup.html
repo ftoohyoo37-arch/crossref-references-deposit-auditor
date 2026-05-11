@@ -86,9 +86,35 @@
         <option value="rule">By rule (paragraph_shaped first)</option>
       </select>
     </label>
+    {% if parent_dois %}
+    <label>Article (parent DOI):
+      <select id="filter-doi">
+        <option value="">all articles ({{ parent_dois|length }})</option>
+        {% for d in parent_dois %}
+          <option value="{{ d }}">{{ d }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    {% endif %}
     <span id="filter-count" class="muted"></span>
+    <span class="muted" style="margin-left:auto"><kbd>?</kbd> shortcuts</span>
   </div>
 </section>
+
+<div id="kbd-help" class="kbd-help" style="display:none">
+  <h3>Keyboard shortcuts</h3>
+  <table>
+    <tr><th>Key</th><th>Action</th></tr>
+    <tr><td><kbd>j</kbd></td><td>Focus next card</td></tr>
+    <tr><td><kbd>k</kbd></td><td>Focus previous card</td></tr>
+    <tr><td><kbd>K</kbd></td><td>Mark focused card as <b>Keep</b></td></tr>
+    <tr><td><kbd>D</kbd></td><td>Mark focused card as <b>Delete</b> (no confirm)</td></tr>
+    <tr><td><kbd>S</kbd></td><td>Toggle the <b>Split</b> editor on focused card</td></tr>
+    <tr><td><kbd>?</kbd></td><td>Show / hide this help</td></tr>
+    <tr><td><kbd>Esc</kbd></td><td>Hide this help</td></tr>
+  </table>
+  <p class="muted">Shortcuts are disabled while you're typing in a textarea or input.</p>
+</div>
 
 {% for c in cards %}
 {% set src = (c.decision.notes if c.decision and c.decision.notes else 'manual') %}
@@ -99,7 +125,9 @@
          data-action="{{ c.decision.action if c.decision else 'pending' }}"
          data-source="{{ src if c.decision else '' }}"
          data-citation-type="{{ c.citation_type or '' }}"
-         data-full-text="{{ c.full_text }}">
+         data-full-text="{{ c.full_text }}"
+         data-parent-doi="{{ c.parent_doi or '' }}"
+         tabindex="0">
   <div class="cleanup-head">
     <code>{{ c.citation_key or 'no key' }}</code> <span class="muted">line {{ c.line }}</span>
     {% if 'paragraph_shaped' in c.rule_ids %}<span class="badge badge-error" style="margin-left:0.5rem">paragraph-shaped</span>{% endif %}
@@ -121,6 +149,10 @@
        data-proposed='{{ c.proposed_splits|tojson }}'
        {% if c.decision and c.decision.action == 'split' %}style="display:block"{% else %}style="display:none"{% endif %}>
     <p class="muted">Edit each chunk to clean it up, click "Match in Crossref" to verify, then "Save split".</p>
+    <details class="diff-toggle">
+      <summary class="muted">Show diff vs. original</summary>
+      <div class="diff-pane"></div>
+    </details>
     <div class="chunk-list">
       {% set initial = (c.decision.split_chunks if c.decision and c.decision.action == 'split' else c.proposed_splits) %}
       {% for chunk in initial %}
@@ -157,6 +189,33 @@ function postJSON(url, body) {
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify(body),
   }).then(r => r.json());
+}
+
+// ---- Diff helpers (used by per-card diff pane) ----
+function escapeHtmlDiff(s) {
+  const div = document.createElement('div');
+  div.textContent = s;
+  return div.innerHTML;
+}
+function tokenize(s) {
+  // Split on whitespace boundaries while keeping the whitespace as separators.
+  return s.split(/(\s+)/);
+}
+function highlightDiffTokens(pane, orig, cleaned) {
+  const oTokens = new Set(tokenize(orig).filter(t => t.trim().length > 0));
+  const cTokens = new Set(tokenize(cleaned).filter(t => t.trim().length > 0));
+  const cols = pane.querySelectorAll('.diff-col');
+  if (cols.length !== 2) return;
+  // Original column: highlight tokens that don't appear in cleaned (RED — removed)
+  cols[0].innerHTML = `<h4>Original</h4>` + tokenize(orig).map(t => {
+    if (t.trim() && !cTokens.has(t)) return `<span class="diff-rm">${escapeHtmlDiff(t)}</span>`;
+    return escapeHtmlDiff(t);
+  }).join('');
+  // Cleaned column: highlight tokens that don't appear in original (GREEN — added/substituted)
+  cols[1].innerHTML = `<h4>Proposed</h4>` + tokenize(cleaned).map(t => {
+    if (t.trim() && !oTokens.has(t)) return `<span class="diff-add">${escapeHtmlDiff(t)}</span>`;
+    return escapeHtmlDiff(t);
+  }).join('');
 }
 
 function setStatus(card, msg, isError) {
@@ -403,18 +462,22 @@ function applyFilters() {
   const status = document.getElementById('filter-status').value;
   const action = document.getElementById('filter-action').value;
   const sort = document.getElementById('filter-sort').value;
+  const doiSel = document.getElementById('filter-doi');
+  const doi = doiSel ? doiSel.value : '';
   const cards = Array.from(document.querySelectorAll('.cleanup-card'));
   let visible = 0;
 
   for (const card of cards) {
     const a = card.dataset.action || 'pending';
     const s = card.dataset.source || '';
+    const cd = card.dataset.parentDoi || '';
     let show = true;
     if (status === 'pending' && a !== 'pending') show = false;
     if (status === 'decided' && a === 'pending') show = false;
     if (status === 'auto' && s !== 'auto') show = false;
     if (status === 'manual' && s !== 'manual') show = false;
     if (action !== 'all' && a !== action) show = false;
+    if (doi && cd !== doi) show = false;
     card.style.display = show ? '' : 'none';
     if (show) visible++;
   }
@@ -436,10 +499,110 @@ function applyFilters() {
     `Showing ${visible} of ${cards.length}`;
 }
 
-['filter-status', 'filter-action', 'filter-sort'].forEach(id => {
-  document.getElementById(id).addEventListener('change', applyFilters);
+['filter-status', 'filter-action', 'filter-sort', 'filter-doi'].forEach(id => {
+  const el = document.getElementById(id);
+  if (el) el.addEventListener('change', applyFilters);
 });
 applyFilters();
+
+// ---- Apply-to-similar batch action ----
+// After a manual decision is saved, scan for other PENDING cards whose
+// first 50 chars (whitespace-normalized) match the decided card's prefix.
+// Show a non-modal banner offering one-click batch application.
+function _normPrefix(text, n=50) {
+  return (text || '').replace(/\s+/g, ' ').trim().slice(0, n).toLowerCase();
+}
+function offerApplyToSimilar(card, action) {
+  const prefix = _normPrefix(card.dataset.fullText);
+  if (prefix.length < 20) return;  // too short to be a useful similarity key
+  const candidates = Array.from(document.querySelectorAll('.cleanup-card')).filter(c => {
+    if (c === card) return false;
+    if (c.dataset.action && c.dataset.action !== 'pending') return false;
+    return _normPrefix(c.dataset.fullText) === prefix;
+  });
+  if (candidates.length === 0) return;
+  const banner = document.createElement('div');
+  banner.className = 'similar-banner';
+  banner.innerHTML = `Found <b>${candidates.length}</b> other pending card(s) with the same opening text. ` +
+    `<button class="btn small" data-yes>Apply <b>${action}</b> to all ${candidates.length}</button> ` +
+    `<button class="btn small" data-no>Dismiss</button>`;
+  card.parentNode.insertBefore(banner, card.nextSibling);
+  banner.querySelector('[data-no]').addEventListener('click', () => banner.remove());
+  banner.querySelector('[data-yes]').addEventListener('click', async () => {
+    banner.querySelectorAll('button').forEach(b => b.disabled = true);
+    let done = 0;
+    for (const c of candidates) {
+      await postJSON(decisionUrl, {
+        line: parseInt(c.dataset.line),
+        citation_key: c.dataset.key || null,
+        action,
+        decided_by: 'manual',
+        notes: 'apply-to-similar batch',
+      });
+      applyDecisionUI(c, action, 'manual');
+      done++;
+    }
+    banner.innerHTML = `<span class="muted">Applied <b>${action}</b> to ${done} similar card(s).</span>`;
+    applyFilters();
+    setTimeout(() => banner.remove(), 4000);
+  });
+}
+
+// Wire offerApplyToSimilar into the existing manual action handlers by
+// hooking applyDecisionUI: we observe each call by re-wiring the buttons
+// in a delegate on document.
+document.addEventListener('click', (ev) => {
+  const target = ev.target;
+  if (!(target instanceof HTMLElement)) return;
+  const card = target.closest('.cleanup-card');
+  if (!card) return;
+  let action = null;
+  if (target.classList.contains('act-keep'))   action = 'keep';
+  if (target.classList.contains('act-delete')) action = 'delete';
+  // Don't offer batch on split (chunks differ per citation)
+  if (action) {
+    setTimeout(() => offerApplyToSimilar(card, action), 200);  // wait for save
+  }
+});
+
+// ---- Keyboard shortcuts ----
+let focusedCard = null;
+function setFocusedCard(card) {
+  if (focusedCard) focusedCard.classList.remove('cleanup-card-focused');
+  focusedCard = card;
+  if (card) {
+    card.classList.add('cleanup-card-focused');
+    card.scrollIntoView({block: 'nearest', behavior: 'smooth'});
+  }
+}
+function visibleCards() {
+  return Array.from(document.querySelectorAll('.cleanup-card')).filter(c => c.style.display !== 'none');
+}
+function moveFocus(delta) {
+  const list = visibleCards();
+  if (list.length === 0) return;
+  const idx = focusedCard ? list.indexOf(focusedCard) : -1;
+  const next = list[Math.max(0, Math.min(list.length - 1, idx + delta))];
+  setFocusedCard(next);
+}
+const helpEl = document.getElementById('kbd-help');
+function toggleHelp() { helpEl.style.display = helpEl.style.display === 'none' ? 'block' : 'none'; }
+
+document.addEventListener('keydown', (ev) => {
+  // Don't intercept when user is typing in a form field.
+  const t = ev.target;
+  if (t && (t.tagName === 'TEXTAREA' || t.tagName === 'INPUT' || t.tagName === 'SELECT')) return;
+  if (ev.metaKey || ev.ctrlKey || ev.altKey) return;
+
+  if (ev.key === '?') { ev.preventDefault(); toggleHelp(); return; }
+  if (ev.key === 'Escape') { helpEl.style.display = 'none'; return; }
+  if (ev.key === 'j') { ev.preventDefault(); moveFocus(+1); return; }
+  if (ev.key === 'k') { ev.preventDefault(); moveFocus(-1); return; }
+  if (!focusedCard) return;
+  if (ev.key === 'K') { ev.preventDefault(); focusedCard.querySelector('.act-keep')?.click(); return; }
+  if (ev.key === 'D') { ev.preventDefault(); focusedCard.querySelector('.act-delete')?.click(); return; }
+  if (ev.key === 'S') { ev.preventDefault(); focusedCard.querySelector('.act-split')?.click(); return; }
+});
 
 document.querySelectorAll('.cleanup-card').forEach(card => {
   const line = parseInt(card.dataset.line);
@@ -498,6 +661,26 @@ document.querySelectorAll('.cleanup-card').forEach(card => {
   }
 
   chunkList.querySelectorAll('.chunk').forEach(bindChunk);
+
+  // Diff pane: when the user opens the <details>, render a token-level
+  // visual diff between the original full text and the joined cleaned
+  // chunks. Re-renders on every textarea input so the user sees changes
+  // live as they edit.
+  const diffPane = card.querySelector('.diff-pane');
+  function renderDiff() {
+    const orig = card.dataset.fullText || '';
+    const cleaned = chunkTexts().join(' ');
+    diffPane.innerHTML = `
+      <div class="diff-col"><h4>Original</h4>${escapeHtmlDiff(orig)}</div>
+      <div class="diff-col"><h4>Proposed</h4>${escapeHtmlDiff(cleaned)}</div>
+    `;
+    // Highlight tokens that differ between the two
+    highlightDiffTokens(diffPane, orig, cleaned);
+  }
+  card.querySelector('.diff-toggle')?.addEventListener('toggle', renderDiff);
+  chunkList.addEventListener('input', () => {
+    if (card.querySelector('.diff-toggle[open]')) renderDiff();
+  });
 
   card.querySelector('.chunk-add').addEventListener('click', () => {
     const div = document.createElement('div');
