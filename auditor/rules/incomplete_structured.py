@@ -28,10 +28,14 @@ META = RuleMeta(
 )
 
 # Structured-content fields that "switch on" the business rule.
+# Includes <author> — empirically, Crossref enforces the venue
+# requirement on citations that contain <author> alone with no other
+# structured fields (test deposit on Reflections 2.1 showed ref31/
+# ref71/ref6 erroring with just author + unstructured_citation).
 STRUCTURED_TRIGGERS = {
     "article_title", "volume", "issue",
     "cYear", "first_page", "last_page", "doi",
-    "edition_number", "component_number",
+    "edition_number", "component_number", "author",
 }
 # Venue identifier — at least one is required when structured fields present.
 # Crossref accepts any of these to satisfy the venue requirement:
@@ -81,14 +85,21 @@ def incomplete_structured_citation(elem, ctx) -> list[Finding]:
     has_venue = bool(present_tags & VENUE_FIELDS)
     has_journal_venue = bool(present_tags & JOURNAL_LIKE_VENUE)
     has_ident = bool(present_tags & IDENT_FIELDS)
-    has_article_title = "article_title" in present_tags
+    # Any structured-content field other than the ident pair itself
+    # counts as a "claim" that triggers the ident requirement when
+    # combined with a journal-shape venue. Empirically Crossref
+    # enforces this even without <article_title> (test deposit case
+    # ref55 had journal_title + cYear and erred for missing ident).
+    has_other_structured = bool(
+        present_tags & (STRUCTURED_TRIGGERS - IDENT_FIELDS)
+    )
 
     missing_venue = not has_venue
     # Crossref only enforces "first_page or author" for journal-shape
-    # citations (journal_title / proceedings_title / issn) that also
-    # have <article_title>. Book chapters identified by <volume_title>
+    # citations (journal_title / proceedings_title / issn). Book
+    # chapters identified by <volume_title>/<series_title>/<isbn>
     # alone are not subject to this rule.
-    missing_ident = has_article_title and has_journal_venue and not has_ident
+    missing_ident = has_journal_venue and has_other_structured and not has_ident
     if not (missing_venue or missing_ident):
         return []
 
