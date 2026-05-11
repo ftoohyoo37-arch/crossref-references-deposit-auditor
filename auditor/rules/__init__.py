@@ -76,6 +76,7 @@ def _import_all_rules() -> None:
         embedded_doi,
         ligature_artifacts,
         stuck_whitespace,
+        incomplete_structured,
     )
 
 

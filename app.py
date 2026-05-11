@@ -223,6 +223,7 @@ def cleanup(audit_id: int):
         "embedded_doi",
         "ligature_artifacts",
         "stuck_whitespace",
+        "incomplete_structured_citation",
     }
     findings = [f for f in db.get_findings(audit_id) if f.rule_id in cleanup_rule_ids]
 
@@ -426,6 +427,15 @@ def iterate_to_convergence(audit_id: int):
                     chunks = proposed
                     why = "notes_section_appended" if "notes_section_appended" in rules else "journal_footer_suffix"
                     notes = f"auto-stripped ({why})"
+            elif "incomplete_structured_citation" in rules:
+                # Strip all structured fields, keep only unstructured.
+                # The xml_writer's split action with [unstructured_text]
+                # replaces the <citation> with a new one containing just
+                # <key> and <unstructured_citation>. Crossref accepts
+                # unstructured-only citations unconditionally.
+                action = "split"
+                chunks = [citation_text]
+                notes = "auto-stripped (incomplete_structured_citation)"
             elif _detect_type(citation_text):
                 action = "keep"
                 notes = f"auto-kept ({_detect_type(citation_text)})"
@@ -479,6 +489,54 @@ def iterate_to_convergence(audit_id: int):
                     "findings": len(final_findings)})
     return jsonify({"final_audit_id": current, "history": history,
                     "iterations": len(history) - 1})
+
+
+@app.route("/filter_dois/<int:audit_id>", methods=["POST"])
+def filter_dois(audit_id: int):
+    """Produce a copy of the deposit XML with selected <doi_citations>
+    blocks removed. Useful when the parent DOI of one or more articles
+    hasn't been registered with Crossref yet — those records would fail
+    with "Referenced DOI not found in Crossref" on submission.
+
+    Body: {"doi_list": ["10.x/y", "10.x/z", ...]}.
+    Returns the filtered XML as a download.
+    """
+    row = db.get_audit(audit_id)
+    if row is None or not row["xml_path"]:
+        abort(404)
+    payload = request.json or {}
+    drop = set(payload.get("doi_list") or [])
+    if not drop:
+        return jsonify({"error": "doi_list is required"}), 400
+
+    parser = ET.XMLParser(remove_blank_text=False)
+    tree = ET.parse(str(row["xml_path"]), parser)
+    root = tree.getroot()
+    removed = 0
+    for elem in list(root.iter()):
+        if elem.tag.rsplit("}", 1)[-1] != "doi_citations":
+            continue
+        doi_child = find_child(elem, "doi")
+        if doi_child is None:
+            continue
+        if text_of(doi_child).strip() in drop:
+            parent = elem.getparent()
+            if parent is not None:
+                parent.remove(elem)
+                removed += 1
+
+    out_path = UPLOAD_DIR / f"audit_{audit_id}.filtered.xml"
+    tmp = out_path.with_suffix(out_path.suffix + ".part")
+    tree.write(str(tmp), xml_declaration=True, encoding="UTF-8")
+    tmp.replace(out_path)
+
+    base = Path(row["filename"]).stem or "deposit"
+    return send_file(
+        out_path,
+        mimetype="application/xml",
+        as_attachment=True,
+        download_name=f"{base}.filtered.xml",
+    )
 
 
 @app.route("/dryrun/<int:audit_id>", methods=["POST"])
