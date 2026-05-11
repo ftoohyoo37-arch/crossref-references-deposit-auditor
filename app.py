@@ -20,7 +20,10 @@ from auditor.models import AuditorConfig, RuleConfig
 from auditor import rules as rules_pkg
 from auditor.citation_types import detect_type
 from auditor.rules._util import find_child, text_of
-from cleanup import propose_splits, match_citation, apply_decisions, count_changes, fix_duplicate_year
+from cleanup import (
+    propose_splits, match_citation, apply_decisions, count_changes,
+    fix_duplicate_year, match_citation_with_fallback,
+)
 from exporters import EXPORTERS
 
 import io
@@ -254,11 +257,15 @@ def cleanup(audit_id: int):
 
 @app.route("/cleanup/<int:audit_id>/match", methods=["POST"])
 def cleanup_match(audit_id: int):
-    """AJAX: fetch a Crossref match for one chunk of text."""
-    text = (request.json or {}).get("text", "")
+    """AJAX: fetch a citation match. Queries Crossref first; if confidence
+    is low or no result, falls back to OpenAlex. The response's `source`
+    field indicates which backend produced the match."""
+    payload = request.json or {}
+    text = payload.get("text", "")
     if not text.strip():
         return jsonify({"error": "empty text"}), 400
-    result = match_citation(text)
+    threshold = float(payload.get("min_score") or 50)
+    result = match_citation_with_fallback(text, min_score=threshold)
     return jsonify(result or {"empty": True})
 
 
@@ -319,6 +326,196 @@ def cleanup_download(audit_id: int):
         as_attachment=True,
         download_name=f"{base}.cleaned.xml",
     )
+
+
+@app.route("/iterate/<int:audit_id>", methods=["POST"])
+def iterate_to_convergence(audit_id: int):
+    """Run the audit -> auto-decide -> download -> audit loop until
+    findings stop dropping (or max_iters is reached). Returns the final
+    audit ID and the per-iteration finding counts so the user can see
+    the convergence trajectory.
+
+    The auto-decide logic mirrors what the cleanup page's JS does, but
+    runs server-side so a single click can chain multiple iterations.
+    """
+    from auditor.rules._util import find_child as _find_child, text_of as _text_of
+    from auditor.citation_types import detect_type as _detect_type
+    from cleanup import fix_duplicate_year as _fix_dup
+    from cleanup.splitter import propose_splits as _propose
+
+    payload = request.json or {}
+    max_iters = int(payload.get("max_iters") or 5)
+    min_score = float(payload.get("min_score") or 50)
+    year_fallback = payload.get("year_fallback") or "keep_second"
+
+    history = []
+    current = audit_id
+    last_count = None
+
+    for it in range(max_iters):
+        row = db.get_audit(current)
+        if row is None or not row["xml_path"]:
+            return jsonify({"error": f"audit #{current} has no saved XML"}), 400
+        findings = db.get_findings(current)
+        history.append({"iter": it, "audit_id": current, "findings": len(findings)})
+
+        # Convergence check: if findings haven't dropped since last iter, stop.
+        if last_count is not None and len(findings) >= last_count:
+            break
+        last_count = len(findings)
+
+        # Apply all auto-decide passes server-side.
+        xml_path = Path(row["xml_path"])
+        tree = ET.parse(str(xml_path))
+        by_line = {e.sourceline: e for e in tree.getroot().iter()
+                   if e.tag.rsplit("}", 1)[-1] == "citation"}
+        rules_by_line: dict[int, set[str]] = {}
+        keys_by_line: dict[int, str | None] = {}
+        for f in findings:
+            if f.line:
+                rules_by_line.setdefault(f.line, set()).add(f.rule_id)
+                keys_by_line[f.line] = f.citation_key
+
+        for line, rules in rules_by_line.items():
+            elem = by_line.get(line)
+            if elem is None:
+                continue
+            uc = _find_child(elem, "unstructured_citation")
+            if uc is None:
+                continue
+            citation_text = _text_of(uc)
+
+            action = None
+            chunks = None
+            notes = ""
+            if "paragraph_shaped" in rules or "footnote_artifact" in rules:
+                action = "delete"
+                why = "footnote_artifact" if "footnote_artifact" in rules else "paragraph_shaped"
+                notes = f"auto-deleted ({why})"
+            elif "duplicate_year_tokens" in rules:
+                r = _fix_dup(citation_text, min_score=min_score, fallback=year_fallback)
+                if r:
+                    action = "split"
+                    chunks = [r["fixed"]]
+                    notes = f"auto-fixed duplicate years ({r['method']})"
+            elif "journal_footer_suffix" in rules or "notes_section_appended" in rules:
+                proposed = _propose(citation_text)
+                if proposed:
+                    action = "split"
+                    chunks = proposed
+                    why = "notes_section_appended" if "notes_section_appended" in rules else "journal_footer_suffix"
+                    notes = f"auto-stripped ({why})"
+            elif _detect_type(citation_text):
+                action = "keep"
+                notes = f"auto-kept ({_detect_type(citation_text)})"
+
+            if action:
+                db.upsert_cleanup_decision(
+                    audit_id=current,
+                    citation_line=line,
+                    citation_key=keys_by_line.get(line),
+                    action=action,
+                    split_chunks=chunks,
+                    crossref_data=None,
+                    notes=notes,
+                )
+
+        # Generate cleaned XML and audit it.
+        decisions = db.get_cleanup_decisions(current)
+        out_path = UPLOAD_DIR / f"audit_{current}.cleaned.xml"
+        apply_decisions(Path(row["xml_path"]), decisions, out_path)
+
+        with open(out_path, "rb") as f:
+            cleaned_bytes = f.read()
+        cfg = _load_config()
+        new_findings = audit(cleaned_bytes, cfg)
+        try:
+            new_root = ET.fromstring(cleaned_bytes)
+            ns = detect_namespace(new_root)
+            citation_tag = f"{{{ns}}}citation" if ns else "citation"
+            n_cites = sum(1 for _ in ET.iterparse(io.BytesIO(cleaned_bytes), events=("end",), tag=citation_tag))
+        except ET.XMLSyntaxError:
+            ns = None
+            n_cites = 0
+
+        new_id = db.insert_audit(
+            filename=f"{Path(row['filename']).stem}.cleaned.iter{it+1}.xml",
+            file_size=len(cleaned_bytes),
+            namespace=ns,
+            citation_n=n_cites,
+            findings=new_findings,
+            config_dict=cfg.to_dict(),
+        )
+        save_path = UPLOAD_DIR / f"audit_{new_id}.xml"
+        save_path.write_bytes(cleaned_bytes)
+        db.set_audit_xml_path(new_id, str(save_path))
+        current = new_id
+
+    # Always report the actual finding count of the final audit (not the
+    # last_count captured before the last iteration's auto-decide).
+    final_findings = db.get_findings(current)
+    history.append({"iter": "final", "audit_id": current,
+                    "findings": len(final_findings)})
+    return jsonify({"final_audit_id": current, "history": history,
+                    "iterations": len(history) - 1})
+
+
+@app.route("/dryrun/<int:audit_id>", methods=["POST"])
+def dryrun_submit(audit_id: int):
+    """Submit the cleaned XML to Crossref's TEST endpoint to surface any
+    business-rule rejections that XSD validation alone won't catch.
+
+    Requires the user to have a Crossref test account; credentials are
+    posted with the request body and never stored. Returns Crossref's
+    raw response (as text) plus the HTTP status code.
+    """
+    payload = request.json or {}
+    username = (payload.get("username") or "").strip()
+    password = (payload.get("password") or "").strip()
+    if not username or not password:
+        return jsonify({
+            "error": "Crossref test credentials required",
+            "help": (
+                "Create a free test account at https://test.crossref.org/ — "
+                "credentials are posted per-request and never stored on disk."
+            ),
+        }), 400
+
+    row = db.get_audit(audit_id)
+    if row is None or not row["xml_path"]:
+        abort(404)
+    src = Path(row["xml_path"])
+
+    # If decisions exist, submit the cleaned version; otherwise the raw upload.
+    decisions = db.get_cleanup_decisions(audit_id)
+    if decisions:
+        cleaned = UPLOAD_DIR / f"audit_{audit_id}.cleaned.xml"
+        apply_decisions(src, decisions, cleaned)
+        submit_path = cleaned
+    else:
+        submit_path = src
+
+    import requests as _requests
+    try:
+        with open(submit_path, "rb") as fh:
+            r = _requests.post(
+                "https://test.crossref.org/servlet/deposit",
+                data={
+                    "operation": "doMDUpload",
+                    "login_id": username,
+                    "login_passwd": password,
+                },
+                files={"fname": (submit_path.name, fh, "application/xml")},
+                timeout=60,
+            )
+        return jsonify({
+            "status_code": r.status_code,
+            "ok": r.ok,
+            "response": r.text[:5000],
+            "submit_url": "https://test.crossref.org/servlet/deposit",
+        })
+    except _requests.RequestException as e:
+        return jsonify({"error": f"submission failed: {e}"}), 500
 
 
 @app.route("/settings", methods=["GET", "POST"])

@@ -81,6 +81,21 @@ th { background: #f4f1ec; font-family: -apple-system, system-ui, sans-serif; fon
 .download-row .muted { font-size: 0.9rem; }
 .download-row code { background: #fff; padding: 0.05rem 0.3rem; border-radius: 3px; font-size: 0.85rem; }
 
+.advanced-row { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+@media (max-width: 800px) { .advanced-row { grid-template-columns: 1fr; } }
+.advanced-action { background: #faf7f1; border: 1px solid var(--border); border-radius: 4px; padding: 0.75rem 1rem; }
+.advanced-action h3 { margin: 0 0 0.4rem 0; font-size: 1rem; }
+.advanced-action label { display: inline-flex; align-items: center; gap: 0.4rem; margin-right: 0.6rem; font-size: 0.9rem; }
+.advanced-action input[type=number], .advanced-action input[type=text], .advanced-action input[type=password] {
+  font: inherit; padding: 0.2rem 0.4rem; border: 1px solid var(--border); border-radius: 3px;
+}
+.advanced-action button { margin-top: 0.5rem; }
+.dryrun-response {
+  margin-top: 0.6rem; max-height: 400px; overflow: auto; background: #fff;
+  border: 1px solid var(--border); border-radius: 3px; padding: 0.5rem;
+  font-family: ui-monospace, Consolas, monospace; font-size: 0.8rem; white-space: pre-wrap;
+}
+
 .filters { display: flex; gap: 1rem; align-items: center; margin: 0.75rem 0; font-size: 0.9rem; }
 .filters select { font: inherit; }
 

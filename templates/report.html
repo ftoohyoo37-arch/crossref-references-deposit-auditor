@@ -31,6 +31,105 @@
 </section>
 
 <section class="card">
+  <h2>Advanced actions</h2>
+  <p class="muted">
+    The cleanup page is the typical workflow. These actions let you automate further or validate against Crossref's actual ingestion pipeline.
+  </p>
+  <div class="advanced-row">
+    <div class="advanced-action">
+      <h3>Iterate to convergence</h3>
+      <p class="muted">Run the audit &rarr; auto-decide &rarr; download &rarr; re-audit loop until findings stop dropping. One click, no manual cycles.</p>
+      <label>Max iterations:
+        <input type="number" id="iter-max" value="5" min="1" max="20" step="1" style="width:4rem">
+      </label>
+      <button class="btn" id="iter-run">Iterate now</button>
+      <div id="iter-progress" class="muted"></div>
+    </div>
+    <div class="advanced-action">
+      <h3>Dry-run submit to Crossref test endpoint</h3>
+      <p class="muted">
+        Submits the (cleaned, if you have decisions saved) XML to Crossref's test ingestion at
+        <code>https://test.crossref.org/servlet/deposit</code> and shows the raw response.
+        Surfaces business-rule rejections that XSD validation alone misses.
+        Requires a Crossref test account (free at <a href="https://test.crossref.org/">test.crossref.org</a>);
+        credentials are sent per request and not stored.
+      </p>
+      <label>Login:
+        <input type="text" id="dryrun-user" placeholder="depositor login" style="width:14rem">
+      </label>
+      <label>Password:
+        <input type="password" id="dryrun-pass" placeholder="depositor password" style="width:14rem">
+      </label>
+      <button class="btn" id="dryrun-submit">Dry-run submit</button>
+      <pre id="dryrun-response" class="dryrun-response muted"></pre>
+    </div>
+  </div>
+</section>
+
+<script>
+const auditId = {{ meta.id }};
+
+document.getElementById('iter-run').addEventListener('click', async () => {
+  const btn = document.getElementById('iter-run');
+  const out = document.getElementById('iter-progress');
+  btn.disabled = true;
+  out.textContent = 'Iterating… this may take several minutes per pass.';
+  try {
+    const r = await fetch(`/iterate/${auditId}`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        max_iters: parseInt(document.getElementById('iter-max').value),
+        min_score: 50,
+        year_fallback: 'keep_second',
+      }),
+    });
+    const data = await r.json();
+    if (data.error) { out.textContent = 'Error: ' + data.error; btn.disabled = false; return; }
+    let html = `<b>Done after ${data.iterations} iteration(s).</b><br>`;
+    html += '<table style="margin-top:0.5rem;font-size:0.9rem"><tr><th>Iter</th><th>Audit</th><th>Findings</th></tr>';
+    for (const h of data.history) {
+      html += `<tr><td>${h.iter}</td><td><a href="/report/${h.audit_id}">#${h.audit_id}</a></td><td>${h.findings}</td></tr>`;
+    }
+    html += '</table>';
+    html += `<p style="margin-top:0.5rem"><a class="btn btn-primary" href="/report/${data.final_audit_id}">View final audit</a></p>`;
+    out.innerHTML = html;
+  } catch (e) {
+    out.textContent = 'Error: ' + e.message;
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+document.getElementById('dryrun-submit').addEventListener('click', async () => {
+  const btn = document.getElementById('dryrun-submit');
+  const out = document.getElementById('dryrun-response');
+  const user = document.getElementById('dryrun-user').value.trim();
+  const pass = document.getElementById('dryrun-pass').value;
+  if (!user || !pass) { out.textContent = 'Please enter Crossref test credentials.'; return; }
+  btn.disabled = true;
+  out.textContent = 'Submitting to Crossref test endpoint…';
+  try {
+    const r = await fetch(`/dryrun/${auditId}`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({username: user, password: pass}),
+    });
+    const data = await r.json();
+    if (data.error) {
+      out.textContent = 'Error: ' + data.error + (data.help ? '\n\n' + data.help : '');
+    } else {
+      out.textContent = `HTTP ${data.status_code} (ok=${data.ok})\n\n${data.response}`;
+    }
+  } catch (e) {
+    out.textContent = 'Error: ' + e.message;
+  } finally {
+    btn.disabled = false;
+  }
+});
+</script>
+
+<section class="card">
   <h2>Findings ({{ findings|length }} of {{ all_count }} shown)</h2>
   <form method="get" class="filters">
     <label>Severity:

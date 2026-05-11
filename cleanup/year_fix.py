@@ -27,6 +27,7 @@ from typing import Any, Literal
 
 from auditor.rules.duplicate_year import DUPLICATE_YEAR_RE
 from .crossref_match import match_citation
+from .openalex_match import match_citation as match_citation_openalex
 
 
 DEFAULT_MIN_SCORE = 50.0
@@ -75,25 +76,32 @@ def fix_duplicate_year(
             "method": "dedup_same_year",
         }
 
-    # Path 2: different years — query Crossref with a clean text.
+    # Path 2: different years — query Crossref first, OpenAlex as fallback.
     cleaned_query = (text[: m.start()] + " " + text[m.end():]).strip()
     cleaned_query = re.sub(r"\s+", " ", cleaned_query)
-    match = match_citation(cleaned_query)
 
-    if match and not match.get("error"):
+    for backend, label in (
+        (match_citation, "crossref_verified"),
+        (match_citation_openalex, "openalex_verified"),
+    ):
+        match = backend(cleaned_query)
+        if not match or match.get("error"):
+            continue
         score = match.get("score") or 0
         canonical = match.get("year")
-        if score >= min_score and canonical is not None:
-            canonical_str = str(canonical)
-            if canonical_str in (first, second):
-                dropped = first if canonical_str == second else second
-                return {
-                    "fixed": _rewrite(text, m, canonical_str),
-                    "match": match,
-                    "kept_year": canonical_str,
-                    "dropped_year": dropped,
-                    "method": "crossref_verified",
-                }
+        if score < min_score or canonical is None:
+            continue
+        canonical_str = str(canonical)
+        if canonical_str not in (first, second):
+            continue
+        dropped = first if canonical_str == second else second
+        return {
+            "fixed": _rewrite(text, m, canonical_str),
+            "match": match,
+            "kept_year": canonical_str,
+            "dropped_year": dropped,
+            "method": label,
+        }
 
     # Path 3: Crossref couldn't disambiguate — apply positional fallback.
     if fallback == "crossref_only":
