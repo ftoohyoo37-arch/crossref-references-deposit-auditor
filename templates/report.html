@@ -50,9 +50,18 @@
       <p class="muted">
         Submits the (cleaned, if you have decisions saved) XML to Crossref's test ingestion at
         <code>https://test.crossref.org/servlet/deposit</code> and shows the raw response.
-        Surfaces business-rule rejections that XSD validation alone misses.
+        Surfaces business-rule rejections (missing required fields, schema-passing-but-malformed
+        citations) that XSD validation alone misses.
         Requires a Crossref test account (free at <a href="https://test.crossref.org/">test.crossref.org</a>);
         credentials are sent per request and not stored.
+      </p>
+      <p class="muted" style="background:#fdf4d9;border-left:3px solid var(--warn-fg);padding:0.5rem 0.7rem;border-radius:3px;font-size:0.88rem">
+        <b>Important:</b> the test endpoint uses a SEPARATE sandbox database that does not mirror
+        production DOIs. A &quot;Referenced DOI not found in Crossref&quot; record-level failure here
+        may simply mean the parent article DOI exists in production but hasn't been replicated
+        into the test sandbox &mdash; not that the DOI is genuinely unregistered. Verify against
+        the Crossref REST API (<code>https://api.crossref.org/works/&lt;DOI&gt;</code>) before
+        treating any record-level failure as a real problem.
       </p>
       <label>Login:
         <input type="text" id="dryrun-user" placeholder="depositor login" style="width:14rem">
