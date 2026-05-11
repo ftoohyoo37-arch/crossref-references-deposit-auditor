@@ -15,6 +15,7 @@ import re
 
 from auditor.journal_footer import strip_footer
 from auditor.notes_section import strip_notes_section
+from auditor.rules.ligature_artifacts import normalize_ligatures
 
 
 YEAR_PARENS_RE = re.compile(r"\((1[5-9]\d{2}|20\d{2}|2100)[a-z]?\)")
@@ -169,10 +170,14 @@ def propose_splits(text: str, max_splits: int = 5) -> list[str]:
     """
     text = text.strip()
 
-    # Pass 0a: strip an appended Notes/Footnotes section if present
+    # Pass 0a: normalize Unicode ligatures (ﬁ → fi, etc.). These survive
+    # PDF text extraction literally but Crossref expects decomposed forms.
+    text = normalize_ligatures(text)
+
+    # Pass 0b: strip an appended Notes/Footnotes section if present
     text, _notes = strip_notes_section(text)
 
-    # Pass 0b: strip journal-page footer suffix if present
+    # Pass 0c: strip journal-page footer suffix if present
     text, _footer = strip_footer(text)
 
     # Pass 1: repeat-author markers

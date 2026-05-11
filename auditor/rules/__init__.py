@@ -73,6 +73,9 @@ def _import_all_rules() -> None:
         duplicate_year,
         footnote_artifact,
         notes_section,
+        embedded_doi,
+        ligature_artifacts,
+        stuck_whitespace,
     )
 
 
