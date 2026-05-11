@@ -32,29 +32,45 @@ YEAR_RE = re.compile(r"(?<!\d)(1[5-9]\d{2}|20\d{2}|2100)(?!\d)")
 # title (e.g. "The 1984 election" or "Year 2000 in retrospect"); those
 # aren't second publication years, just numbers in titles.
 QUOTED_REGION_RE = re.compile(r"[\"“][^\"“”]*[\"”]")
+# URL region — covers https?://… up to the next whitespace. Years inside
+# URL slugs ("/2018/", "from-1890-to-1965/") are not publication years.
+URL_REGION_RE = re.compile(r"https?://\S+", re.IGNORECASE)
 
 
 def _real_year_tokens(text: str) -> list[str]:
-    """Year-looking tokens minus the obvious false positives.
+    """Distinct year-like tokens minus the obvious false positives.
 
-    Excludes:
-    - Years inside quoted titles (e.g. "The 1984 election" — title number,
-      not a second publication year).
-    - Volume markers like `1991(2)` (year followed by `(digit`).
-    - URL/handle fragments like `/2027/...` or `2027.42` (preceded by `/`,
-      `.`, or `=`, or followed by `.` then a digit).
-    - Page ranges like `pp. 1991-1995` (year followed by `-` then a digit
-      that's part of an obvious range with the preceding number close in
-      magnitude — a 4-digit "year" inside `\\d{4}-\\d{4}` is much more often
-      a page range than two distinct publication years).
+    Returns DISTINCT years (so "2021. … 2021." counts as one), in
+    first-seen order. Exclusions applied before the dedup pass:
+
+    - Years inside quoted titles: "The 1984 election" — title number,
+      not a second publication year.
+    - Years inside URLs: "/2018/" or "from-1890-to-1965/" — URL slug
+      content, not a publication year.
+    - Parenthesized journal-founding dates: "Atlantic Monthly (1993)" —
+      year wrapped in parens with no digit immediately following the
+      close paren is a metadata year, not a glued reference's publication
+      year.
+    - Volume markers: "1991(2)" — year followed by `(digit`.
+    - URL/handle fragments: "/2027/", "=2027", ".2027", "2027.42"
+      (preceded by `/`, `.`, or `=`, or followed by `.` then a digit).
+    - Year ranges: "1991-1995", "1700-1964" — two adjacent year-like
+      numbers separated by a hyphen are a date range, not two
+      publication years (regardless of what precedes).
     """
     quoted_spans = [(m.start(), m.end()) for m in QUOTED_REGION_RE.finditer(text)]
+    url_spans = [(m.start(), m.end()) for m in URL_REGION_RE.finditer(text)]
 
+    seen: set[str] = set()
     out: list[str] = []
     for m in YEAR_RE.finditer(text):
         start, end = m.span()
-        # Skip year-like numbers that fall inside a quoted title.
+
+        # Skip year-like numbers inside quoted titles.
         if any(qs <= start < qe for qs, qe in quoted_spans):
+            continue
+        # Skip year-like numbers inside URLs.
+        if any(us <= start < ue for us, ue in url_spans):
             continue
 
         before_char = text[start - 1] if start > 0 else ""
@@ -63,17 +79,33 @@ def _real_year_tokens(text: str) -> list[str]:
         # Volume marker: 1991(2)
         if after.startswith("(") and len(after) > 1 and after[1].isdigit():
             continue
+        # Parenthesized metadata year: "Atlantic Monthly (1993) 320(3):"
+        # Match (YYYY) when preceded by `(` and followed by `)`.
+        if before_char == "(" and after.startswith(")"):
+            continue
         # URL / handle fragment: /2027/, =2027, .2027, 2027.42
         if before_char in "/.=":
             continue
         if after.startswith(".") and len(after) > 1 and after[1].isdigit():
             continue
-        # Page range: 1991-1995 (and the preceding token was also year-ish)
-        if after.startswith("-") and len(after) > 1 and after[1].isdigit():
-            preceding = text[max(0, start - 5):start]
-            if "pp." in preceding or preceding.endswith(", ") or preceding.endswith(": "):
+        # Year range: any YYYY-YYYY (e.g., 1700-1964, 1991-1995).
+        # If this year is followed by `-` and then 4 digits forming
+        # another year-like number, both ends of the range are date
+        # markers, not separate publication years.
+        if after.startswith("-") and len(after) > 4 and after[1:5].isdigit():
+            continue
+        # Mirror: skip if THIS year is the second half of a YYYY-YYYY
+        # range (preceded by 4-digit-then-hyphen sequence).
+        before5 = text[max(0, start - 5):start]
+        if len(before5) >= 5 and before5[0].isdigit() and before5[-1] == "-":
+            if before5[:4].isdigit():
                 continue
-        out.append(m.group(0))
+
+        year = m.group(0)
+        if year in seen:
+            continue
+        seen.add(year)
+        out.append(year)
     return out
 
 
