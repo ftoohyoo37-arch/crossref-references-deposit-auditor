@@ -168,7 +168,14 @@ These rules run once per `<citation>` element. They use namespace-agnostic local
   1. Empty.
   2. Fewer than `min_words` words (default 5) — likely a fragment.
   3. More than `max_words` words (default 60) — likely two or more refs glued together.
-  4. More than `max_year_count` (default 1) "real" 4-digit year tokens. "Real" excludes obvious volume markers like `1991(2)`, URL fragments like `handle/2027.42/`, and page ranges like `pp. 1991-1995`.
+  4. More than `max_year_count` (default 1) **distinct** 4-digit year tokens. The "real year" filter excludes:
+     - Years inside quoted titles (`"The 1984 election"`)
+     - Years inside URLs (`/2018/...` or `from-1890-to-1965/`)
+     - Parenthesized journal-founding years (`Atlantic Monthly (1993) 320(3)`)
+     - Volume markers (`1991(2)`)
+     - URL/handle fragments (`/2027/`, `=2027`, `2027.42`)
+     - Year ranges (`1700-1964`, `1991-1995` — both endpoints skipped)
+     - Same year repeated (deduplicated, so `2021. … press release, July 6, 2021` counts as 1)
   5. More than `max_semicolons` (default 2) semicolons.
 - **Parameters:** `min_words`, `max_words`, `max_year_count`, `max_semicolons`.
 - **Notes:** This is the rule that drives most cleanup work. Tuning the thresholds on the Settings page lets you reduce noise on journals with consistently long unstructured citations.
