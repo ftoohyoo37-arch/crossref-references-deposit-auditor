@@ -212,6 +212,11 @@ def cleanup(audit_id: int):
         return redirect(url_for("report", audit_id=audit_id))
 
     # Pull warnings from rules that flag glued/garbage/footer-bleed citations
+    # Rules that produce CLEANUP-ACTIONABLE findings — i.e., something a
+    # reviewer or the auto-decide passes can do something about. Rules
+    # that are purely informational (embedded_doi: deposits fine as-is,
+    # promoting is just nice-to-have) are deliberately excluded so they
+    # don't bloat the cleanup queue.
     cleanup_rule_ids = {
         "unstructured_length",
         "paragraph_shaped",
@@ -220,7 +225,6 @@ def cleanup(audit_id: int):
         "duplicate_year_tokens",
         "footnote_artifact",
         "notes_section_appended",
-        "embedded_doi",
         "ligature_artifacts",
         "stuck_whitespace",
         "incomplete_structured_citation",

@@ -11,14 +11,17 @@ META = RuleMeta(
     id="embedded_doi",
     name="DOI buried in unstructured citation text",
     description=(
-        "Flags <unstructured_citation> values that contain a DOI (either "
-        "as a bare 10.xxxx/yyy pattern or as a doi.org URL) when the "
-        "<citation> has no separate <doi> child element. Promoting the "
-        "DOI to a structured field substantially improves Crossref's "
-        "ability to match the reference, and the DOI is verifiable."
+        "Informational notice (not a deposit-blocking problem). Flags "
+        "<unstructured_citation> values that contain a DOI (either as a "
+        "bare 10.xxxx/yyy pattern or as a doi.org URL) when the "
+        "<citation> has no separate <doi> child element. The citation "
+        "deposits successfully as-is; promoting the DOI to a structured "
+        "field is a nice-to-have that improves Crossref's matching "
+        "value, but it doesn't require manual cleanup. These cards are "
+        "deliberately excluded from the cleanup queue."
     ),
     scope="citation",
-    default_severity=Severity.WARNING,
+    default_severity=Severity.INFO,
     default_enabled=True,
     params=[],
 )
