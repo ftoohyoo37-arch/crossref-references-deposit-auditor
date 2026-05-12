@@ -214,9 +214,10 @@ def cleanup(audit_id: int):
     # Pull warnings from rules that flag glued/garbage/footer-bleed citations
     # Rules that produce CLEANUP-ACTIONABLE findings — i.e., something a
     # reviewer or the auto-decide passes can do something about. Rules
-    # that are purely informational (embedded_doi: deposits fine as-is,
-    # promoting is just nice-to-have) are deliberately excluded so they
-    # don't bloat the cleanup queue.
+    # that are purely informational are deliberately excluded so they
+    # don't bloat the cleanup queue:
+    #   - embedded_doi: citation deposits fine; promoting DOI is nice-to-have
+    #   - stuck_whitespace: PDF extraction artifact; deposits as-is, no safe auto-fix
     cleanup_rule_ids = {
         "unstructured_length",
         "paragraph_shaped",
@@ -226,7 +227,6 @@ def cleanup(audit_id: int):
         "footnote_artifact",
         "notes_section_appended",
         "ligature_artifacts",
-        "stuck_whitespace",
         "incomplete_structured_citation",
     }
     findings = [f for f in db.get_findings(audit_id) if f.rule_id in cleanup_rule_ids]

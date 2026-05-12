@@ -11,17 +11,19 @@ META = RuleMeta(
     id="stuck_whitespace",
     name="Mid-word whitespace from PDF extraction",
     description=(
-        "Flags <unstructured_citation> values with extra spaces inserted "
+        "Informational notice (not a deposit-blocking problem). Flags "
+        "<unstructured_citation> values with extra spaces inserted "
         "mid-word, a common GROBID/PDF text-extraction artifact (e.g., "
-        "'Hida lgo, Alexa ndra' or 'Riley-M u kavetz'). Detected via "
-        "patterns like 'A b' (single capital + space + lowercase letter "
-        "starting a small fragment) or two-character runs separated by "
-        "single spaces inside what should be a single word. The cleanup "
-        "tool flags these for review but does not auto-fix; mechanical "
-        "removal could damage legitimate hyphenated names or acronyms."
+        "'Hida lgo, Alexa ndra' or 'Riley-M u kavetz'). The citation "
+        "deposits successfully as-is — Crossref doesn't validate word "
+        "spacing — so these are flagged for awareness rather than "
+        "action. Mechanical merging is unsafe (would damage legitimate "
+        "hyphenated names or accented words), so no auto-fix is "
+        "provided. These cards are deliberately excluded from the "
+        "cleanup queue."
     ),
     scope="citation",
-    default_severity=Severity.WARNING,
+    default_severity=Severity.INFO,
     default_enabled=True,
     params=[],
 )
