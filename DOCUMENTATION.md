@@ -21,13 +21,18 @@ A pre-submission audit and cleanup tool for Crossref deposit XML, designed to si
    - [Bulk auto-decide](#54-bulk-auto-decide)
    - [Filtering and sorting](#55-filtering-and-sorting-cards)
    - [Downloading the cleaned XML](#56-downloading-the-cleaned-xml)
-6. [Configuration](#6-configuration)
-7. [Pipeline integration](#7-pipeline-integration)
-8. [HTTP API reference](#8-http-api-reference)
-9. [Database schema](#9-database-schema)
-10. [Architecture](#10-architecture)
-11. [Limitations and known issues](#11-limitations-and-known-issues)
-12. [Troubleshooting](#12-troubleshooting)
+6. [Batch workflow](#6-batch-workflow-multi-volume-single-journal-deposits)
+   - [Batch upload](#61-batch-upload)
+   - [Batch dashboard](#62-batch-dashboard)
+   - [Merge](#63-merge)
+   - [Recommended batch workflow](#64-recommended-batch-workflow-for-a-multi-volume-backfill)
+7. [Configuration](#7-configuration)
+8. [Pipeline integration](#8-pipeline-integration)
+9. [HTTP API reference](#9-http-api-reference)
+10. [Database schema](#10-database-schema)
+11. [Architecture](#11-architecture)
+12. [Limitations and known issues](#12-limitations-and-known-issues)
+13. [Troubleshooting](#13-troubleshooting)
 
 ---
 
@@ -141,7 +146,9 @@ Filenames embed the audit ID: `<original-stem>.audit-<id>.<ext>`.
 
 ### 4.4 Audit rule reference
 
-Eleven rules ship by default. Each is a Python module under [auditor/rules/](auditor/rules/) with a `META: RuleMeta` describing it and a registered check function.
+Sixteen rules ship by default. Each is a Python module under [auditor/rules/](auditor/rules/) with a `META: RuleMeta` describing it and a registered check function.
+
+**A note on severity and the cleanup queue.** Most rules default to `warning` and produce cards in the cleanup queue at `/cleanup/<id>`. Two rules — `embedded_doi` and `stuck_whitespace` — default to `info` and are *deliberately excluded* from the cleanup queue. They flag conditions the user should be aware of (a DOI buried in unstructured text; PDF-extraction word-spacing artifacts) but neither blocks deposit nor has a safe auto-fix, so surfacing them as review cards would only add noise. They still appear in the audit report, the JSON/CSV/Excel exports, and the severity counts on the home page.
 
 #### Document-scoped rules
 
@@ -212,6 +219,28 @@ These rules run once per `<citation>` element. They use namespace-agnostic local
 - **What it checks:** flags citations that look like body text or paragraphs accidentally captured by the scraper, rather than bibliographic entries. Triggers only when **all** of these hold: (1) the text has at least `min_long_sentences` (default 3) sentences of 8+ words, (2) it doesn't open with an author-block pattern, (3) it has no `(YYYY` marker anywhere. Conservative by design — if any of those three conditions fails, the rule stays silent.
 - **Parameters:** `min_long_sentences`, `min_chars`.
 - **Cleanup behavior:** in the cleanup tool, citations flagged by this rule are auto-deleted in Pass 1 of bulk auto-decide (no Crossref query needed).
+
+##### `incomplete_structured_citation` — missing fields Crossref requires
+- **Default severity:** `warning`
+- **What it checks:** two Crossref business rules that XSD validation can't catch. Calibrated against two real test deposits.
+  - **Venue sub-check:** when a citation contains ANY structured-content field (`article_title`, `volume`, `issue`, `cYear`, `first_page`, `last_page`, `doi`, `edition_number`, `component_number`, or `author`), it must also include at least one venue identifier (`journal_title`, `proceedings_title`, `volume_title`, `series_title`, `issn`, or `isbn`). Crossref error if missing: *"Either ISSN or Journal title or Proceedings title must be supplied."*
+  - **Ident sub-check:** when a citation is journal-shape (has `journal_title`, `proceedings_title`, or `issn`) AND has any other structured trigger, it must also include `first_page` OR `author`. Book chapters identified only by `volume_title`/`series_title`/`isbn` are NOT subject to this rule. Crossref error if missing: *"Either first page or author must be supplied."*
+- **Cleanup behavior:** the cleanup tool's bulk auto-decide handles these in Pass 1.4. It strips ALL structured fields from the citation, leaving only `<unstructured_citation>`. Crossref accepts unstructured-only citations unconditionally (no minimums apply). Verified end-to-end: on a 7,109-citation Reflections deposit, 93 citations were auto-fixed this way and the resulting file produced 0 individual citation errors at Crossref.
+
+##### `embedded_doi` — DOI buried in unstructured citation text (informational)
+- **Default severity:** `info`
+- **What it checks:** flags `<unstructured_citation>` values that contain a DOI (either as a `doi.org` URL or a bare `10.xxxx/yyy` pattern) when the `<citation>` has no separate `<doi>` child element. The citation deposits successfully as-is; promoting the embedded DOI to a structured `<doi>` field improves Crossref matching value but isn't a fix.
+- **Cleanup behavior:** **not in the cleanup queue.** These are informational only — the audit report shows the count for awareness.
+
+##### `ligature_artifacts` — Unicode ligature normalization
+- **Default severity:** `warning`
+- **What it checks:** flags citations containing Unicode ligature codepoints (`ﬁ` U+FB01, `ﬀ` U+FB00, `ﬂ`, `ﬃ`, `ﬄ`, `ﬅ`, `ﬆ`). PDF text extractors sometimes preserve these typographic ligatures literally; Crossref expects decomposed forms.
+- **Cleanup behavior:** the splitter automatically normalizes these as a pre-pass — `"scientiﬁc"` becomes `"scientific"`, `"coﬀee"` becomes `"coffee"` — so proposed cleanup chunks are always ligature-free. The audit rule fires for visibility but the fix is silent.
+
+##### `stuck_whitespace` — mid-word PDF-extraction whitespace (informational)
+- **Default severity:** `info`
+- **What it checks:** flags `<unstructured_citation>` values with spurious spaces inserted mid-word, a common GROBID/PDF text-extraction artifact (`Riley-M u kavetz`, single lowercase letter embedded between longer fragments). Includes a safe-token guard for legitimate one-letter words (Spanish `y`, `e`; English `a`, `i`; accented variants).
+- **Cleanup behavior:** **not in the cleanup queue.** Crossref doesn't validate word spacing, so these deposit successfully as-is, and mechanical merging would risk damaging legitimate hyphenated names or accents. Informational only.
 
 ##### `doi_format` — DOI pattern check
 - **Default severity:** `error`
@@ -321,6 +350,8 @@ The **Bulk auto-decide via Crossref** card at the top of the cleanup page automa
 
 The decision notes record which method resolved each card (`dedup_same_year`, `crossref_verified`, `fallback_keep_second`, `fallback_keep_first`). On the Reflections backfill (57 duplicate-year cases): 13 dedup'd, 14 Crossref-verified, 30 resolved via `keep_second` fallback — full coverage with no manual review needed.
 
+**Pass 1.4 (instant) — Incomplete-structured auto-strip.** Every card flagged by `incomplete_structured_citation` is auto-marked **split** with a single chunk equal to the `<unstructured_citation>` text. The XML writer replaces the original `<citation>` with one containing only `<key>` and `<unstructured_citation>` — Crossref accepts unstructured-only citations unconditionally, so this turns a deposit-rejection into a clean acceptance.
+
 **Pass 1.5 (instant) — Trailing-artifact auto-strip.** Every card flagged by either `journal_footer_suffix` (a journal page footer like `Reflections | Volume 24, Issue 2, Spring 2025`) or `notes_section_appended` (a Notes/Footnotes block glued onto the last works-cited entry) is auto-marked **split** with the splitter's pre-stripped chunks. The splitter has already removed the trailing artifact in either case; this pass simply commits that change as a decision. No Crossref query needed. The decision notes record which rule triggered the strip.
 
 **Pass 1.7 (instant) — Recognized-type auto-keep.** Every card whose `<unstructured_citation>` text is identified by `detect_type()` as a conference presentation, news/website article, or software/code repo is auto-marked **keep**. Crossref doesn't index these, so a REST query would return no match and waste time. The card's notes record which type was detected (e.g., `auto-kept (website)`).
@@ -355,10 +386,12 @@ The **Filter cards** section at the top of the page provides four orthogonal con
 | --- | --- |
 | **Status** | All / Pending only / Any decision / Auto-decided only / Manually decided only |
 | **Action** | All actions / Keep / Delete / Split |
-| **Sort** | By line number / By action (delete → split → keep → pending) / By rule (paragraph-shaped first) |
+| **Sort** | **Pending first, decided at bottom** (default) / By line number / By action (delete → split → keep → pending) / By rule (paragraph-shaped first) |
 | **Article (parent DOI)** | All articles / one specific `<doi>` from the deposit's `<doi_citations>` blocks (each block represents one article's references) |
 
 A live "Showing N of M" count updates as you change filters. Cards also receive a subtle background tint based on their action — pink for delete, yellow for split, green for keep — so the page can be visually scanned at a glance.
+
+The default `Pending first` sort floats reviewed cards to the bottom in line order while keeping pending cards at the top in line order. Designed for the common pattern where 90% of cards get auto-decided by bulk auto-decide and the remaining manual-review work stays clustered at the top of the page. Switch to `By line number` when you want strict source order regardless of decision state.
 
 ### 5.5.1 Keyboard shortcuts
 
@@ -398,7 +431,46 @@ Citations without a saved decision are left untouched. So you can download mid-r
 
 ---
 
-## 6. Configuration
+## 6. Batch workflow (multi-volume single-journal deposits)
+
+When a journal's reference backfill is split across many volume-level XML files — e.g., Across the Disciplines with 22 separate `atd-volume-N.xml` files, all belonging to one depositor — the batch workflow audits and merges them into a single submission deposit.
+
+### 6.1 Batch upload
+
+The home page has a second upload form labeled **"Batch audit + merge"**. Pick all the XML files you want in one batch (the file dialog supports multi-select with Shift-click or Ctrl-click), optionally name the batch (e.g., `"ATD vols 1-22"`), and submit. Each file is audited independently and tagged with a shared `batch_id`. The page redirects to `/batch/<id>`.
+
+### 6.2 Batch dashboard
+
+The dashboard at `/batch/<id>` shows:
+
+- **Per-batch totals**: file count, total citations, total errors, total warnings, batch creation timestamp.
+- **Schema/depositor compatibility check**: scans every file's `<head>/<depositor>/<email_address>` (the canonical Crossref depositor identifier) and every file's schema namespace. If all files share one depositor and one schema, a `"Single depositor across batch — merge is safe"` indicator appears. If files disagree, a red **"Merge blocked"** banner explains exactly which dimension fails, since Crossref can't accept a deposit spanning multiple depositors.
+- **Per-file table**: one row per audit with citation count, error/warning/info counts, and links to that file's individual report or cleanup queue. Clicking a row drops you into that file's report or cleanup with a **"← Back to batch: \<name\>"** breadcrumb at the top for easy navigation back.
+- **Merge form**: optional `merged_id` input (auto-generated if blank) and a **"Merge & download single deposit XML"** button.
+
+### 6.3 Merge
+
+Click the merge button to produce a single combined deposit XML. The merger:
+
+1. Validates that every file in the batch shares the same schema namespace; halts with a clear error if not.
+2. Validates that every file shares the same depositor (matched on `<email_address>`, falling back to `<depositor_name>`); halts if not.
+3. Takes the first file's `<head>` envelope as the merged file's envelope. Updates `<doi_batch_id>` to either the user-provided `merged_id` or `merged-<timestamp>`. Only refreshes `<timestamp>` if the source already had one (the `doi_resources_schema` doesn't permit `<timestamp>` in `<head>`, only the full deposit schema does — unconditionally adding one would break XSD validation).
+4. For each file in the batch, applies any saved cleanup decisions BEFORE extracting `<doi_citations>` blocks. So the merged file reflects each volume's individual cleanup state.
+5. Concatenates every `<doi_citations>` block from every file under the merged `<body>`.
+6. Writes atomically to `uploads/batch_<id>.merged.xml` and streams the file as a download with a sanitized filename based on the batch name.
+
+The resulting file is a single Crossref deposit ready for submission via the production endpoint or the test endpoint.
+
+### 6.4 Recommended batch workflow for a multi-volume backfill
+
+1. Upload all N volume-level XMLs as one batch with a descriptive name.
+2. On the dashboard, confirm the "single depositor" indicator appears.
+3. Click into each file's cleanup queue and click **"Run auto-decide"** with your preferred fallback settings. Most files will resolve to small per-file manual-review piles (mostly long-but-legitimate citations).
+4. Spot-check or fully review each file's remaining pending cards.
+5. Return to the dashboard. Click **Merge & download**.
+6. Submit the merged file to Crossref (production endpoint, or test endpoint first if you want the extra confidence — see the caveat in §11).
+
+## 7. Configuration
 
 ### Settings page (`/settings`)
 
@@ -431,7 +503,7 @@ Every audit stores the merged config it ran against in the `audits.config_json` 
 
 ---
 
-## 7. Pipeline integration
+## 8. Pipeline integration
 
 The auditor is designed to be importable from your scraper without involving the Flask UI.
 
@@ -494,7 +566,7 @@ counts = apply_decisions(Path("deposit.xml"), decisions, Path("deposit.cleaned.x
 
 ---
 
-## 8. HTTP API reference
+## 9. HTTP API reference
 
 All routes are local-only by default (`127.0.0.1:5001`). Responses are HTML except where noted; AJAX endpoints accept and return JSON.
 
@@ -502,10 +574,12 @@ All routes are local-only by default (`127.0.0.1:5001`). Responses are HTML exce
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| `GET`  | `/` | Upload form + recent audits list. |
+| `GET`  | `/` | Upload forms (single + batch) plus recent audits and batches. |
 | `POST` | `/audit` | Multipart upload (`xmlfile`). Runs audit, stores XML and findings, redirects to `/report/<id>`. |
-| `GET`  | `/report/<id>` | Full audit report with findings table and filter dropdowns. Query params: `severity`, `rule`. |
-| `GET`  | `/cleanup/<id>` | Cleanup workspace for an audit. |
+| `POST` | `/batch_audit` | Multipart upload (`xmlfiles`, repeated; optional `batch_name`). Creates a batch and runs an audit per file, tagging each with the new batch_id. Redirects to `/batch/<id>`. |
+| `GET`  | `/report/<id>` | Full audit report with findings table and filter dropdowns. Query params: `severity`, `rule`. Shows breadcrumb back to the batch if the audit belongs to one. |
+| `GET`  | `/cleanup/<id>` | Cleanup workspace for an audit. Shows breadcrumb back to the batch if the audit belongs to one. |
+| `GET`  | `/batch/<id>` | Batch dashboard — per-file table, depositor/schema compatibility check, merge form. |
 | `GET`  | `/settings` | Per-rule configuration form. |
 | `POST` | `/settings` | Persist form to `config/auditor_config.json`. Redirects back to `/settings` with a flash message. |
 
@@ -534,13 +608,23 @@ All routes are local-only by default (`127.0.0.1:5001`). Responses are HTML exce
 | Method | Path | Body | Returns |
 | --- | --- | --- | --- |
 | `POST` | `/iterate/<id>` | `{"max_iters": 5, "min_score": 50, "year_fallback": "keep_second"}` | Runs audit → auto-decide → download → re-audit until findings stop dropping. Returns `{"final_audit_id": <id>, "history": [{"iter": N, "audit_id": <id>, "findings": <n>}, …], "iterations": <count>}`. |
-| `POST` | `/dryrun/<id>` | `{"username": "<crossref-test-login>", "password": "<password>"}` | POSTs the (cleaned, if decisions exist) XML to `https://test.crossref.org/servlet/deposit` and returns `{"status_code": <int>, "ok": <bool>, "response": "<text>"}`. Credentials are forwarded per request and never stored. Returns 400 if credentials are missing. |
+| `POST` | `/dryrun/<id>` | `{"username": "<crossref-test-login>", "password": "<password>"}` | POSTs the (cleaned, if decisions exist) XML to `https://test.crossref.org/servlet/deposit` and returns `{"status_code": <int>, "ok": <bool>, "response": "<text>"}`. Credentials are forwarded per request and never stored. Returns 400 if credentials are missing. **Important**: the test endpoint does not mirror production DOIs (see §12). |
+| `POST` | `/filter_dois/<id>` | `{"doi_list": ["10.x/a", "10.x/b", ...]}` | Produces a copy of the deposit XML with the listed `<doi_citations>` blocks removed. Useful for dropping article DOIs that aren't yet registered with Crossref. Streams the result as `<stem>.filtered.xml`. |
+| `POST` | `/batch/<id>/merge` | Form-encoded: `merged_id` (optional) | Validates depositor/schema compatibility, applies saved cleanup decisions per file, concatenates all `<doi_citations>` blocks under one envelope, streams the merged file as `<batch_name>.merged.xml`. Returns 302 with a flash message if validation fails. |
 
 ---
 
-## 9. Database schema
+## 10. Database schema
 
-SQLite database at `audits.db` (gitignored). Three tables.
+SQLite database at `audits.db` (gitignored). Four tables.
+
+### `batches`
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | INTEGER PK | Auto-increment batch ID. |
+| `name` | TEXT | User-supplied or auto-generated batch label. |
+| `created_at` | TEXT | `datetime('now')` default. |
 
 ### `audits`
 
@@ -554,6 +638,7 @@ SQLite database at `audits.db` (gitignored). Three tables.
 | `error_n` / `warning_n` / `info_n` | INTEGER | Pre-computed finding counts by severity. |
 | `config_json` | TEXT | Snapshot of `AuditorConfig` at run time. |
 | `xml_path` | TEXT | Local filesystem path to the saved upload. |
+| `batch_id` | INTEGER FK → `batches(id)` | Optional. NULL for standalone single-file audits. Indexed for fast per-batch lookup. |
 | `created_at` | TEXT | `datetime('now')` default. |
 
 ### `findings`
@@ -587,7 +672,7 @@ Indexed on `audit_id`, `rule_id`, `severity` for fast filter queries.
 
 ---
 
-## 10. Architecture
+## 11. Architecture
 
 ### File layout
 
@@ -684,7 +769,7 @@ The `_import_all_rules()` function at the bottom of that module imports every ru
 
 ---
 
-## 11. Limitations and known issues
+## 12. Limitations and known issues
 
 - **Schema validation gaps.** Four mathml/xml dependency XSDs that Crossref's schemas reference don't resolve at the URLs declared in the includes. lxml falls back to alternates so validation still works, but `fetch_xsds.py` reports "Fetched 29/33 XSD files" — this is expected.
 - **Crossref scoring inconsistency.** Bibliographic relevance scores aren't normalized across query types. A textbook may legitimately score 49 even when matched correctly. Treat the threshold as journal-article-tuned.
@@ -692,10 +777,12 @@ The `_import_all_rules()` function at the bottom of that module imports every ru
 - **Author-block detection.** The `paragraph_shaped` rule's author detector handles common patterns (`Smith, J.`, `Smith J,`, `MacDonald, K.`, `Abu-Hamour, B.`, `American Psychological Association.`) but won't recognize every institutional-author variant. False-positive rate measured at <2% on Reflections-scale data.
 - **No undo for cleanup decisions.** Decisions are upserted; clicking a different action overwrites. To reset a card, manually reload the page after deleting the row from `cleanup_decisions` (or mark all "Keep").
 - **Single-user, local only.** No authentication, no multi-tenancy, no remote access by default. Designed for single-developer workstations.
+- **Crossref test sandbox does not mirror production DOIs.** The `/dryrun` endpoint posts to `https://test.crossref.org/servlet/deposit`, which uses a separate database. Record-level "Referenced DOI not found in Crossref" failures from the dryrun do not necessarily mean the DOI is unregistered — it may exist in production but not in the test sandbox. **Verify failed parent DOIs against the public Crossref REST API** (`https://api.crossref.org/works/<DOI>`) before assuming a real problem. Per-citation business-rule errors (the kind covered by `incomplete_structured_citation`) ARE the same in test and production, so those remain actionable.
+- **Batch merge is single-depositor only.** A Crossref deposit can only target DOIs owned by one depositor account. The `/batch/<id>/merge` endpoint validates that all files in the batch share one depositor (matched on `<email_address>` in `<head>/<depositor>`) and one schema namespace; it refuses to merge across depositors. Multi-journal cross-depositor workflows require submitting each journal as a separate deposit.
 
 ---
 
-## 12. Troubleshooting
+## 13. Troubleshooting
 
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
@@ -707,6 +794,11 @@ The `_import_all_rules()` function at the bottom of that module imports every ru
 | `pip install xhtml2pdf` fails on Windows | Old pip without wheel support | Upgrade pip: `python -m pip install --upgrade pip`, then reinstall. |
 | 500 error on Flask UI | Template syntax error after manual edit, or stale cached templates | Restart `python app.py`. |
 | Cleanup page renders but Run auto-decide does nothing | Browser console shows JS error | Open DevTools, check console; usually a stale browser cache — hard reload (Ctrl+F5). |
+| Batch dashboard shows red "Merge blocked: different depositors" | Files in the batch identify different `<email_address>` values in their `<head>/<depositor>` blocks | Batch merge requires single-depositor inputs. If the files genuinely share a depositor but have inconsistent metadata, edit the source XMLs so `<email_address>` matches across them. Otherwise, submit each depositor's files as separate Crossref deposits. |
+| Batch merge fails with "Cannot merge: inputs use different schema namespaces" | One file uses `crossref.org/schema/X.Y.Z` (full deposit) and another uses `crossref.org/doi_resources_schema/X.Y.Z` (citation update) | Crossref deposits must use a single schema. Re-run the per-volume scrapers so all files emit the same schema, then re-upload. |
+| Dryrun reports "Referenced DOI not found in Crossref" but `doi.org` resolves the URL fine | The test endpoint sandbox doesn't mirror production DOIs | Not a real problem. Verify against `https://api.crossref.org/works/<DOI>` to confirm production registration. The full submission against the production endpoint will succeed for those records. |
+| Sort order changed after upgrade — decided cards moved to bottom | Default sort changed to "Pending first, decided at bottom" | Use the Sort dropdown to switch back to "By line number" if you prefer strict source order. |
+| Cleanup queue is shorter than expected after upgrade | `embedded_doi` and `stuck_whitespace` are now `info`-only and excluded from the queue | Both rules still fire and show in the audit report — only the cleanup queue excludes them. Set `severity` back to `warning` in `config/auditor_config.json` and add the rule_id to `cleanup_rule_ids` in `app.py` if you want them in the queue. |
 
 ---
 
