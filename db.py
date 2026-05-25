@@ -21,6 +21,12 @@ DB_PATH = Path(__file__).resolve().parent / "audits.db"
 
 
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS batches (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    name        TEXT NOT NULL,
+    created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS audits (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     filename     TEXT NOT NULL,
@@ -32,8 +38,12 @@ CREATE TABLE IF NOT EXISTS audits (
     info_n       INTEGER NOT NULL DEFAULT 0,
     config_json  TEXT,
     xml_path     TEXT,
+    batch_id     INTEGER REFERENCES batches(id) ON DELETE SET NULL,
     created_at   TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+-- idx_audits_batch_id is created in init_db() AFTER the batch_id
+-- migration runs, so that existing pre-batch DBs don't crash here.
 
 CREATE TABLE IF NOT EXISTS findings (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -75,6 +85,14 @@ def _migrate_add_xml_path() -> None:
             conn.execute("ALTER TABLE audits ADD COLUMN xml_path TEXT")
 
 
+def _migrate_add_batch_id() -> None:
+    """Add batch_id column to existing audits table if it's missing."""
+    with connect() as conn:
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(audits)")}
+        if "batch_id" not in cols:
+            conn.execute("ALTER TABLE audits ADD COLUMN batch_id INTEGER")
+
+
 @contextmanager
 def connect() -> Iterator[sqlite3.Connection]:
     conn = sqlite3.connect(str(DB_PATH))
@@ -94,6 +112,48 @@ def init_db() -> None:
     with connect() as conn:
         conn.executescript(SCHEMA)
     _migrate_add_xml_path()
+    _migrate_add_batch_id()
+    # batch_id index requires the migration to have run first.
+    with connect() as conn:
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_audits_batch_id ON audits(batch_id)")
+
+
+# ---------- Batch helpers ----------
+
+def insert_batch(name: str) -> int:
+    with connect() as conn:
+        cur = conn.execute("INSERT INTO batches (name) VALUES (?)", (name,))
+        return cur.lastrowid
+
+
+def set_audit_batch(audit_id: int, batch_id: int) -> None:
+    with connect() as conn:
+        conn.execute("UPDATE audits SET batch_id = ? WHERE id = ?", (batch_id, audit_id))
+
+
+def get_batch(batch_id: int) -> sqlite3.Row | None:
+    with connect() as conn:
+        return conn.execute(
+            "SELECT * FROM batches WHERE id = ?", (batch_id,),
+        ).fetchone()
+
+
+def list_batches(limit: int = 25) -> list[sqlite3.Row]:
+    with connect() as conn:
+        return list(conn.execute(
+            "SELECT b.*, COUNT(a.id) AS audit_count "
+            "FROM batches b LEFT JOIN audits a ON a.batch_id = b.id "
+            "GROUP BY b.id ORDER BY b.created_at DESC LIMIT ?",
+            (limit,),
+        ))
+
+
+def list_batch_audits(batch_id: int) -> list[sqlite3.Row]:
+    with connect() as conn:
+        return list(conn.execute(
+            "SELECT * FROM audits WHERE batch_id = ? ORDER BY filename",
+            (batch_id,),
+        ))
 
 
 def set_audit_xml_path(audit_id: int, path: str) -> None:

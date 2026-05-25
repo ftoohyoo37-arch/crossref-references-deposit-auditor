@@ -11,6 +11,43 @@
 </section>
 
 <section class="card">
+  <h1>Batch audit + merge</h1>
+  <p class="muted">
+    Upload many XML files at once (e.g., volume-level deposits for a single journal).
+    Each file gets its own audit and cleanup queue, viewable from a shared dashboard.
+    When all files are clean, merge them into one deposit XML to submit to Crossref &mdash;
+    the merger validates that all files share the same depositor and schema, then
+    concatenates their <code>&lt;doi_citations&gt;</code> blocks under one envelope.
+  </p>
+  <form action="{{ url_for('batch_audit') }}" method="post" enctype="multipart/form-data" class="upload">
+    <input type="file" name="xmlfiles" accept=".xml,application/xml,text/xml" multiple required>
+    <input type="text" name="batch_name" placeholder="batch name (e.g., 'ATD volumes 1-22')" style="flex:1">
+    <button type="submit">Audit batch</button>
+  </form>
+</section>
+
+{% if batches %}
+<section class="card">
+  <h2>Recent batches</h2>
+  <table class="history">
+    <thead>
+      <tr><th>#</th><th>Name</th><th>Files</th><th>Created</th></tr>
+    </thead>
+    <tbody>
+      {% for b in batches %}
+      <tr>
+        <td>{{ b['id'] }}</td>
+        <td><a href="{{ url_for('batch_view', batch_id=b['id']) }}">{{ b['name'] }}</a></td>
+        <td>{{ b['audit_count'] }}</td>
+        <td class="muted">{{ b['created_at'] }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}
+
+<section class="card">
   <h2>Recent audits</h2>
   {% if audits %}
   <table class="history">

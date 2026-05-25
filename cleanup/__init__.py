@@ -5,10 +5,12 @@ from .crossref_match import match_citation
 from .openalex_match import match_citation as match_citation_openalex
 from .xml_writer import apply_decisions, count_changes
 from .year_fix import fix_duplicate_year
+from .batch_merge import merge_deposits
 
 __all__ = [
     "propose_splits", "match_citation", "match_citation_openalex",
     "apply_decisions", "count_changes", "fix_duplicate_year",
+    "merge_deposits",
 ]
 
 

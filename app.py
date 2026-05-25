@@ -5,6 +5,7 @@ scrapers; consumes the same `<doi_batch>` XML they emit.
 """
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
@@ -22,7 +23,7 @@ from auditor.citation_types import detect_type
 from auditor.rules._util import find_child, text_of
 from cleanup import (
     propose_splits, match_citation, apply_decisions, count_changes,
-    fix_duplicate_year, match_citation_with_fallback,
+    fix_duplicate_year, match_citation_with_fallback, merge_deposits,
 )
 from exporters import EXPORTERS
 
@@ -45,6 +46,12 @@ def _load_config() -> AuditorConfig:
 
 
 def _meta_dict(audit_row) -> dict:
+    # batch_id may be absent on legacy rows; SQLite Row supports .keys()
+    try:
+        batch_id = audit_row["batch_id"]
+    except (IndexError, KeyError):
+        batch_id = None
+    batch = db.get_batch(batch_id) if batch_id else None
     return {
         "id": audit_row["id"],
         "filename": audit_row["filename"],
@@ -55,13 +62,142 @@ def _meta_dict(audit_row) -> dict:
         "warning_n": audit_row["warning_n"],
         "info_n": audit_row["info_n"],
         "created_at": audit_row["created_at"],
+        "batch_id": batch_id,
+        "batch_name": batch["name"] if batch else None,
     }
 
 
 @app.route("/")
 def index():
     audits = db.list_audits(limit=25)
-    return render_template("index.html", audits=audits)
+    batches = db.list_batches(limit=15)
+    return render_template("index.html", audits=audits, batches=batches)
+
+
+# ---------- Batch routes ----------
+
+@app.route("/batch_audit", methods=["POST"])
+def batch_audit():
+    """Multipart upload of multiple XML files. Each becomes its own audit;
+    all are tagged with a shared batch_id so they can be viewed together
+    and merged into a single deposit."""
+    files = request.files.getlist("xmlfiles")
+    files = [f for f in files if f and f.filename]
+    if not files:
+        flash("No files selected.", "error")
+        return redirect(url_for("index"))
+
+    batch_name = (request.form.get("batch_name") or "").strip()
+    if not batch_name:
+        batch_name = f"batch-{len(files)}-files"
+    batch_id = db.insert_batch(batch_name)
+
+    cfg = _load_config()
+    for file in files:
+        raw = file.read()
+        if not raw:
+            continue
+        findings = audit(raw, cfg)
+        try:
+            root = ET.fromstring(raw)
+            ns = detect_namespace(root)
+            citation_tag = f"{{{ns}}}citation" if ns else "citation"
+            n_citations = sum(
+                1 for _ in ET.iterparse(io.BytesIO(raw), events=("end",), tag=citation_tag)
+            )
+        except ET.XMLSyntaxError:
+            ns = None
+            n_citations = 0
+
+        audit_id = db.insert_audit(
+            filename=file.filename,
+            file_size=len(raw),
+            namespace=ns,
+            citation_n=n_citations,
+            findings=findings,
+            config_dict=cfg.to_dict(),
+        )
+        upload_path = UPLOAD_DIR / f"audit_{audit_id}.xml"
+        tmp = upload_path.with_suffix(upload_path.suffix + ".part")
+        tmp.write_bytes(raw)
+        tmp.replace(upload_path)
+        db.set_audit_xml_path(audit_id, str(upload_path))
+        db.set_audit_batch(audit_id, batch_id)
+
+    return redirect(url_for("batch_view", batch_id=batch_id))
+
+
+@app.route("/batch/<int:batch_id>")
+def batch_view(batch_id: int):
+    row = db.get_batch(batch_id)
+    if row is None:
+        abort(404)
+    audits = db.list_batch_audits(batch_id)
+    # Quick depositor + namespace compatibility check across the batch so
+    # the dashboard can warn the user before they try to merge.
+    namespaces: set[str] = set()
+    depositors: set[str] = set()
+    total_citations = 0
+    total_errors = 0
+    total_warnings = 0
+    for a in audits:
+        if a["namespace"]:
+            namespaces.add(a["namespace"])
+        total_citations += a["citation_n"]
+        total_errors += a["error_n"]
+        total_warnings += a["warning_n"]
+        if a["xml_path"] and Path(a["xml_path"]).exists():
+            try:
+                from cleanup.batch_merge import _depositor_signature
+                t = ET.parse(a["xml_path"])
+                d = _depositor_signature(t.getroot())
+                if d:
+                    depositors.add(d)
+            except Exception:
+                pass
+    return render_template(
+        "batch.html",
+        batch=row,
+        audits=audits,
+        namespaces=sorted(namespaces),
+        depositors=sorted(depositors),
+        total_citations=total_citations,
+        total_errors=total_errors,
+        total_warnings=total_warnings,
+    )
+
+
+@app.route("/batch/<int:batch_id>/merge", methods=["POST"])
+def batch_merge(batch_id: int):
+    row = db.get_batch(batch_id)
+    if row is None:
+        abort(404)
+    audits = db.list_batch_audits(batch_id)
+    inputs: list[tuple[Path, dict | None]] = []
+    for a in audits:
+        if not a["xml_path"] or not Path(a["xml_path"]).exists():
+            continue
+        decisions = db.get_cleanup_decisions(a["id"])
+        inputs.append((Path(a["xml_path"]), decisions or None))
+    if not inputs:
+        flash("No usable audits in this batch.", "error")
+        return redirect(url_for("batch_view", batch_id=batch_id))
+
+    merged_name = (request.form.get("merged_id") or "").strip() or None
+    out_path = UPLOAD_DIR / f"batch_{batch_id}.merged.xml"
+    try:
+        summary = merge_deposits(inputs, out_path, new_batch_id=merged_name)
+    except ValueError as e:
+        flash(f"Merge failed: {e}", "error")
+        return redirect(url_for("batch_view", batch_id=batch_id))
+
+    safe_name = re.sub(r"[^A-Za-z0-9_-]", "_", row["name"])[:60] or f"batch_{batch_id}"
+    return send_file(
+        out_path,
+        mimetype="application/xml",
+        as_attachment=True,
+        download_name=f"{safe_name}.merged.xml",
+    )
 
 
 @app.route("/audit", methods=["POST"])

@@ -3,7 +3,12 @@
 {% block content %}
 <section class="card">
   <h1>Cleanup — Audit #{{ meta.id }}</h1>
-  <p class="muted"><a href="{{ url_for('report', audit_id=meta.id) }}">&larr; back to report</a> · {{ meta.filename }}</p>
+  <p class="muted">
+    {% if meta.batch_id %}
+    <a href="{{ url_for('batch_view', batch_id=meta.batch_id) }}">&larr; Batch: {{ meta.batch_name }}</a> &middot;
+    {% endif %}
+    <a href="{{ url_for('report', audit_id=meta.id) }}">&larr; back to report</a> &middot; {{ meta.filename }}
+  </p>
   <div class="meta-grid">
     <div><span class="label">Cards</span><span>{{ cards|length }}</span></div>
     <div><span class="label">Pending</span><span>{{ summary.pending }}</span></div>
@@ -81,6 +86,7 @@
     </label>
     <label>Sort:
       <select id="filter-sort">
+        <option value="pending" selected>Pending first, decided at bottom</option>
         <option value="line">By line number</option>
         <option value="action">By action (delete → split → keep → pending)</option>
         <option value="rule">By rule (paragraph_shaped first)</option>
@@ -516,13 +522,20 @@ function applyFilters() {
   // Sort visible cards
   const main = document.querySelector('main');
   const sortKeys = {
-    line:   c => parseInt(c.dataset.line || 0),
-    action: c => ({delete: 0, split: 1, keep: 2, pending: 3}[c.dataset.action || 'pending']),
-    rule:   c => ((c.dataset.rules || '').includes('paragraph_shaped') ? 0 : 1),
+    pending: c => (c.dataset.action && c.dataset.action !== 'pending') ? 1 : 0,
+    line:    c => parseInt(c.dataset.line || 0),
+    action:  c => ({delete: 0, split: 1, keep: 2, pending: 3}[c.dataset.action || 'pending']),
+    rule:    c => ((c.dataset.rules || '').includes('paragraph_shaped') ? 0 : 1),
   };
   const fn = sortKeys[sort];
   if (fn) {
-    cards.sort((x, y) => fn(x) - fn(y));
+    // Sort with a stable secondary by line number so pending cards stay
+    // in their natural source-order while floating to the top.
+    cards.sort((x, y) => {
+      const d = fn(x) - fn(y);
+      if (d !== 0) return d;
+      return parseInt(x.dataset.line || 0) - parseInt(y.dataset.line || 0);
+    });
     cards.forEach(c => main.appendChild(c));
   }
 

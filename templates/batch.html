@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block title %}Batch &middot; {{ batch.name }}{% endblock %}
+{% block content %}
+
+<section class="card">
+  <p class="muted"><a href="{{ url_for('index') }}">&larr; Home</a></p>
+  <h1>Batch: {{ batch.name }}</h1>
+  <div class="meta-grid">
+    <div><span class="label">Files</span><span>{{ audits|length }}</span></div>
+    <div><span class="label">Citations</span><span>{{ "{:,}".format(total_citations) }}</span></div>
+    <div><span class="label">Errors</span><span class="sev-error">{{ total_errors }}</span></div>
+    <div><span class="label">Warnings</span><span class="sev-warning">{{ total_warnings }}</span></div>
+    <div><span class="label">Created</span><span class="muted">{{ batch.created_at }}</span></div>
+  </div>
+
+  {% if namespaces|length > 1 %}
+    <div class="flash flash-error">
+      <b>Merge blocked:</b> these files use different schema namespaces
+      ({{ namespaces|join(", ") }}). Crossref deposits must use a single schema.
+    </div>
+  {% endif %}
+  {% if depositors|length > 1 %}
+    <div class="flash flash-error">
+      <b>Merge blocked:</b> these files identify different depositors
+      ({{ depositors|join(", ") }}). A Crossref deposit can only target DOIs
+      owned by one depositor account.
+    </div>
+  {% elif depositors|length == 1 %}
+    <p class="muted">Single depositor across batch:
+      <code>{{ depositors[0] }}</code> &mdash; merge is safe.</p>
+  {% endif %}
+
+  <form method="post" action="{{ url_for('batch_merge', batch_id=batch.id) }}" class="merge-form"
+        {% if namespaces|length > 1 or depositors|length > 1 %}onsubmit="return confirm('Crossref will likely reject this merge. Continue anyway?')"{% endif %}>
+    <label>Merged doi_batch_id (optional):
+      <input type="text" name="merged_id" placeholder="auto-generated if blank" style="width:18rem">
+    </label>
+    <button class="btn btn-primary" type="submit">Merge &amp; download single deposit XML</button>
+  </form>
+  <p class="muted" style="font-size:0.9rem">
+    Merging concatenates every <code>&lt;doi_citations&gt;</code> block from every
+    file in this batch under one <code>&lt;doi_batch&gt;</code> envelope. Cleanup
+    decisions saved on individual files are applied before extraction, so the
+    merged file reflects each volume's cleanup state. Files without saved decisions
+    contribute their raw audited content.
+  </p>
+</section>
+
+<section class="card">
+  <h2>Files in this batch</h2>
+  <table class="history">
+    <thead>
+      <tr>
+        <th>#</th><th>Filename</th><th>Cites</th><th>Errors</th><th>Warnings</th><th>Info</th>
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for a in audits %}
+      <tr>
+        <td>{{ a['id'] }}</td>
+        <td><a href="{{ url_for('report', audit_id=a['id']) }}">{{ a['filename'] }}</a></td>
+        <td>{{ "{:,}".format(a['citation_n']) }}</td>
+        <td class="sev-error">{{ a['error_n'] }}</td>
+        <td class="sev-warning">{{ a['warning_n'] }}</td>
+        <td class="sev-info">{{ a['info_n'] }}</td>
+        <td>
+          <a href="{{ url_for('report', audit_id=a['id']) }}">report</a>
+          &middot;
+          <a href="{{ url_for('cleanup', audit_id=a['id']) }}">clean up</a>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

@@ -2,6 +2,11 @@
 {% block title %}Audit #{{ meta.id }} — {{ meta.filename }}{% endblock %}
 {% block content %}
 <section class="card">
+  {% if meta.batch_id %}
+  <p class="muted">
+    <a href="{{ url_for('batch_view', batch_id=meta.batch_id) }}">&larr; Back to batch: {{ meta.batch_name }}</a>
+  </p>
+  {% endif %}
   <h1>Audit #{{ meta.id }}</h1>
   <div class="meta-grid">
     <div><span class="label">File</span><span>{{ meta.filename }}</span></div>
