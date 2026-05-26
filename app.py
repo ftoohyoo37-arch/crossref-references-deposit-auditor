@@ -43,6 +43,11 @@ app.secret_key = "crossref-auditor-local-only"
 from pipeline import routes as pipeline_routes  # noqa: E402
 pipeline_routes.register(app)
 
+# Mount the minting workflow (whole-issue PDF → per-article splits +
+# CrossRef content-registration deposit XML)
+from minting import routes as minting_routes  # noqa: E402
+minting_routes.register(app)
+
 
 def _load_config() -> AuditorConfig:
     cfg = AuditorConfig.load(CONFIG_PATH)

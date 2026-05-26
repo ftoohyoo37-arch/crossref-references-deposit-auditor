@@ -1,0 +1,202 @@
+{% extends "base.html" %}
+{% block title %}{{ j.name }} — Minting{% endblock %}
+
+{% block content %}
+<div class="card">
+  <div class="journal-header">
+    <h1>{{ j.name }} — minting</h1>
+    <span class="muted">
+      <a href="{{ url_for('mint.dashboard') }}">← All journals</a> ·
+      <a href="{{ url_for('pipeline.journal_view', slug=j.slug) }}">Pipeline →</a>
+    </span>
+  </div>
+
+  <div class="meta-grid">
+    <div><span class="label">Slug</span><span>{{ j.slug }}</span></div>
+    <div><span class="label">Batch prefix</span><span>{{ j.batch_prefix }}</span></div>
+    {% if meta.doi_prefix %}
+    <div><span class="label">DOI prefix</span><span>{{ meta.doi_prefix }}</span></div>
+    {% endif %}
+    {% if meta.doi_template %}
+    <div><span class="label">DOI template</span><span><code>{{ meta.doi_template }}</code></span></div>
+    {% endif %}
+  </div>
+
+  <p class="muted">
+    Place whole-issue PDFs in <code>{{ j.dir.name }}/issue_pdfs/</code>.
+    Each <code>&lt;slug&gt;.pdf</code> gets a sibling <code>&lt;slug&gt;.json</code>
+    sidecar (created on first edit) capturing the per-article boundaries
+    and metadata.
+  </p>
+</div>
+
+<h2 style="font-size: 1.1rem;">Issues</h2>
+
+{% if issues %}
+<div class="card">
+  <table class="issues-table">
+    <thead>
+      <tr>
+        <th>Issue</th>
+        <th>Sidecar</th>
+        <th>Articles</th>
+        <th>Split PDFs</th>
+        <th>DOIs assigned</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for issue in issues %}
+      <tr>
+        <td><strong>{{ issue.slug }}</strong>
+          {% if issue.sidecar and issue.sidecar.year %}
+            <br><span class="muted">{{ issue.sidecar.issue_title or '' }}
+            v{{ issue.sidecar.volume }} n{{ issue.sidecar.issue }}, {{ issue.sidecar.year }}</span>
+          {% endif %}
+        </td>
+        <td>
+          {% if issue.has_sidecar %}
+            <span class="pill pill-ok">saved</span>
+          {% else %}
+            <span class="pill pill-empty">none</span>
+          {% endif %}
+        </td>
+        <td>{{ issue.article_count }}</td>
+        <td>
+          {% if issue.is_split %}
+            <span class="pill pill-ok">{{ issue.split_count }} files</span>
+          {% else %}
+            <span class="pill pill-empty">—</span>
+          {% endif %}
+        </td>
+        <td>
+          {% if issue.article_with_dois %}
+            {{ issue.article_with_dois }} / {{ issue.article_count }}
+          {% else %}—{% endif %}
+        </td>
+        <td><a href="{{ url_for('mint.issue_view', slug=j.slug, issue_slug=issue.slug) }}"
+               class="btn">Edit →</a></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<div class="card">
+  <p class="muted">No issue PDFs found in <code>{{ j.dir.name }}/issue_pdfs/</code>.</p>
+</div>
+{% endif %}
+
+<h2 style="font-size: 1.1rem;" id="latest-deposit">Build content-registration deposit</h2>
+
+<div class="card">
+  <p class="muted">
+    Generates a CrossRef <code>&lt;journal&gt;</code>-schema deposit XML
+    containing one <code>&lt;journal_article&gt;</code> per defined article,
+    with DOIs assigned from the template below. Submit the resulting XML
+    to CrossRef's deposit endpoint to mint the DOIs.
+  </p>
+
+  <form method="POST" action="{{ url_for('mint.build_deposit_route', slug=j.slug) }}"
+        class="wizard-form" style="margin-top: 0.5rem;">
+    <div class="form-row">
+      <label class="block">
+        <span class="label">CrossRef DOI prefix</span>
+        <input type="text" name="doi_prefix" required
+               value="{{ meta.doi_prefix or '' }}"
+               placeholder="10.12345"
+               style="width: 100%; padding: 0.4rem 0.6rem; border: 1px solid var(--border); border-radius: 3px; font: inherit;">
+        <small class="muted">Assigned to you by CrossRef when you register as a depositor.</small>
+      </label>
+      <label class="block">
+        <span class="label">DOI template</span>
+        <input type="text" name="doi_template" required
+               value="{{ meta.doi_template or '{prefix}/{slug}.{year}.{vol}.{iss}.{seq:02d}' }}"
+               style="width: 100%; padding: 0.4rem 0.6rem; border: 1px solid var(--border); border-radius: 3px; font: inherit;">
+        <small class="muted">Placeholders: <code>{prefix}</code>, <code>{slug}</code>, <code>{year}</code>, <code>{vol}</code>, <code>{iss}</code>, <code>{seq}</code> / <code>{seq:02d}</code>.</small>
+      </label>
+    </div>
+    <div class="form-row">
+      <label class="block">
+        <span class="label">Full journal title</span>
+        <input type="text" name="journal_full_title" required
+               value="{{ meta.name or j.name }}"
+               style="width: 100%; padding: 0.4rem 0.6rem; border: 1px solid var(--border); border-radius: 3px; font: inherit;">
+      </label>
+      <label class="block">
+        <span class="label">ISSN (optional)</span>
+        <input type="text" name="issn"
+               value="{{ meta.issn or '' }}"
+               placeholder="1234-5678"
+               style="width: 100%; padding: 0.4rem 0.6rem; border: 1px solid var(--border); border-radius: 3px; font: inherit;">
+      </label>
+    </div>
+
+    <label class="block">
+      <span class="label">Resource base URL (optional)</span>
+      <input type="text" name="resource_base_url"
+             value="{{ meta.resource_base_url or '' }}"
+             placeholder="https://compstudiesjournal.com/wp-content/uploads/2026/01/"
+             style="width: 100%; padding: 0.4rem 0.6rem; border: 1px solid var(--border); border-radius: 3px; font: inherit;">
+      <small class="muted">Each article gets <code>{resource_base}{filename}</code> as its public landing URL.</small>
+    </label>
+
+    {% if issues %}
+    <fieldset style="margin-top: 1rem; padding: 0.5rem 1rem; border: 1px solid var(--border); border-radius: 4px;">
+      <legend class="label">Include issues</legend>
+      {% for issue in issues %}
+        {% if issue.has_sidecar and issue.article_count > 0 %}
+        <label style="display: block; margin: 0.2rem 0;">
+          <input type="checkbox" name="include_issue" value="{{ issue.slug }}" checked>
+          {{ issue.slug }}
+          <span class="muted">({{ issue.article_count }} article{{ '' if issue.article_count == 1 else 's' }})</span>
+        </label>
+        {% endif %}
+      {% endfor %}
+    </fieldset>
+    {% endif %}
+
+    <label class="block" style="margin-top: 0.75rem;">
+      <input type="checkbox" name="include_citations">
+      Include extracted references in the same deposit (combined registration+references)
+      <br><small class="muted">When checked, articles' citation lists from the reference-extraction
+      pipeline are embedded inside each <code>&lt;journal_article&gt;</code>. Recommended
+      for journals new to CrossRef so you can mint and back-fill in one round-trip.</small>
+    </label>
+
+    <div class="form-actions" style="margin-top: 1rem;">
+      <button type="submit" class="btn btn-primary">Generate deposit XML</button>
+    </div>
+  </form>
+</div>
+
+{# List recent content-registration outputs so the user can grab them #}
+{% set output_dir = (j.dir / "output") %}
+{% set deposit_files = output_dir.glob(j.batch_prefix + "-content-registration-*.xml") | list %}
+{% if deposit_files %}
+<div class="card">
+  <h3 style="margin-top: 0; font-size: 1rem;">Generated content-registration deposits</h3>
+  <ul style="margin: 0; padding-left: 1.2rem;">
+    {% for f in deposit_files | sort(reverse=true, attribute='name') %}
+    <li>
+      <a href="{{ url_for('mint.serve_deposit', slug=j.slug, filename=f.name) }}">{{ f.name }}</a>
+      <span class="muted">({{ "%.0f"|format(f.stat().st_size / 1024) }} KB)</span>
+    </li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+
+<style>
+  .issues-table { font-size: 0.92rem; }
+  .issues-table th { white-space: nowrap; }
+  .pill { display: inline-block; padding: 0.1rem 0.5rem; border-radius: 4px;
+          font-family: -apple-system, system-ui, sans-serif; font-size: 0.75rem; }
+  .pill-ok { background: var(--ok-bg); color: var(--ok-fg); }
+  .pill-empty { background: #f4f1ec; color: var(--muted); }
+  .wizard-form .block { display: block; margin: 0.5rem 0; }
+  .wizard-form .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+  .wizard-form small { display: block; margin-top: 0.2rem; font-size: 0.78rem; }
+  @media (max-width: 700px) { .wizard-form .form-row { grid-template-columns: 1fr; } }
+</style>
+{% endblock %}

@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}Minting — DOI Minting Dashboard{% endblock %}
+
+{% block content %}
+<div class="card">
+  <h1>DOI minting</h1>
+  <p class="muted">
+    Workflow for journals that publish whole-issue PDFs and don't yet
+    have CrossRef DOIs. Split issue PDFs into per-article PDFs, capture
+    table-of-contents metadata, and generate a CrossRef content-registration
+    deposit XML that mints a DOI for each article.
+  </p>
+  <p class="muted">
+    To participate, a journal needs an <code>issue_pdfs/</code>
+    subdirectory containing whole-issue PDFs (one per issue), plus a
+    <code>DOI_PREFIX</code> setting in its <code>journal.py</code>.
+  </p>
+</div>
+
+{% if journals %}
+  {% for entry in journals %}
+  <div class="card">
+    <div class="journal-header">
+      <h2><a href="{{ url_for('mint.journal_view', slug=entry.j.slug) }}">
+        {{ entry.j.name }}</a></h2>
+      <span class="muted">{{ entry.j.batch_prefix }}</span>
+    </div>
+    <div class="meta-grid">
+      <div><span class="label">Issue PDFs</span>
+        <span>{{ entry.summary.issue_count }}</span></div>
+      <div><span class="label">Already split</span>
+        <span>{{ entry.summary.split_count }}</span></div>
+      <div><span class="label">Articles defined</span>
+        <span>{{ entry.summary.total_articles }}</span></div>
+      <div><span class="label">DOIs assigned</span>
+        <span>{{ entry.summary.articles_with_dois }} / {{ entry.summary.total_articles }}</span></div>
+    </div>
+  </div>
+  {% endfor %}
+{% else %}
+<div class="card">
+  <p class="muted">
+    No journals have minting state yet. Drop one or more whole-issue
+    PDFs into <code>&lt;Journal&gt;/issue_pdfs/&lt;slug&gt;.pdf</code>, then refresh
+    this page.
+  </p>
+</div>
+{% endif %}
+{% endblock %}
