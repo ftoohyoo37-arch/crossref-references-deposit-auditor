@@ -38,6 +38,13 @@
         {% elif p.key == 'ojs' %}
           <span class="muted">— auto-detected from <code>/index.php/&lt;journal&gt;/</code>
           URL patterns or the OJS generator meta tag.</span>
+        {% elif p.key == 'bepress' %}
+          <span class="muted">— auto-detected from <code>digitalcommons.*.edu</code>
+          / <code>scholarworks.*.edu</code> hosts or
+          <code>bepress_citation_*</code> meta tags.</span>
+        {% elif p.key == 'janeway' %}
+          <span class="muted">— auto-detected from the Janeway generator meta tag
+          or "powered by Janeway" footer text.</span>
         {% elif p.key == 'unknown' %}
           <span class="muted">— fallback if no platform matches; you'll need to
           hand-edit the generated <code>downloader.py</code>.</span>

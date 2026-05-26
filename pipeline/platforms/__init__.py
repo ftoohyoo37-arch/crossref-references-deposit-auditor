@@ -10,12 +10,14 @@ the `PLATFORMS` list.
 """
 from __future__ import annotations
 
-from . import wac, ojs, unknown
+from . import wac, ojs, bepress, janeway, unknown
 
 
 # Order matters: detection.detect() walks this list and the first hit wins.
-# Put the most specific platforms first; `unknown` is the fallback.
-PLATFORMS = [wac.PLATFORM, ojs.PLATFORM, unknown.PLATFORM]
+# Put the most specific (most-distinctive-signal) platforms first;
+# `unknown` is the fallback. Bepress comes before WAC/OJS because the
+# `bepress_citation_*` meta tag signature is uniquely strong.
+PLATFORMS = [bepress.PLATFORM, wac.PLATFORM, ojs.PLATFORM, janeway.PLATFORM, unknown.PLATFORM]
 
 
 def by_key(key: str):
