@@ -153,6 +153,106 @@ def issue_infer(slug: str, issue_slug: str):
     return redirect(url_for("mint.issue_view", slug=slug, issue_slug=issue_slug))
 
 
+@bp.route("/<slug>/issue/<issue_slug>/toc_pages", methods=["POST"])
+def issue_save_toc_pages(slug: str, issue_slug: str):
+    """Save which pages of the issue PDF are the table of contents."""
+    j = _resolve_journal(slug)
+    issue = state.find_issue(j.dir, issue_slug)
+    if issue is None:
+        abort(404)
+    sidecar = issue.sidecar or IssueSidecar.new_for(issue.issue_pdf)
+    pages_str = (request.form.get("toc_pages") or "").strip()
+    sidecar.toc_pages = _parse_page_list(pages_str)
+    sidecar.save(issue.sidecar_path)
+    flash(f"Saved ToC pages: {sidecar.toc_pages or 'none'}", "info")
+    return redirect(url_for("mint.issue_view", slug=slug, issue_slug=issue_slug))
+
+
+@bp.route("/<slug>/issue/<issue_slug>/ocr_toc", methods=["POST"])
+def issue_ocr_toc(slug: str, issue_slug: str):
+    """Run OCR on the marked ToC pages, parse the result, populate articles."""
+    j = _resolve_journal(slug)
+    issue = state.find_issue(j.dir, issue_slug)
+    if issue is None:
+        abort(404)
+    sidecar = issue.sidecar or IssueSidecar.new_for(issue.issue_pdf)
+    pages_str = (request.form.get("toc_pages") or "").strip()
+    if pages_str:
+        sidecar.toc_pages = _parse_page_list(pages_str)
+    if not sidecar.toc_pages:
+        flash("Enter the page numbers of the ToC (e.g. '1, 2' or '1-3') "
+              "before running OCR.", "error")
+        return redirect(url_for("mint.issue_view", slug=slug, issue_slug=issue_slug))
+
+    # Need the issue PDF's page count for end_page clamping
+    from pypdf import PdfReader
+    try:
+        page_count = len(PdfReader(str(issue.issue_pdf)).pages)
+    except Exception as e:
+        flash(f"Could not open issue PDF: {e}", "error")
+        return redirect(url_for("mint.issue_view", slug=slug, issue_slug=issue_slug))
+
+    try:
+        n_arts, ocr_text = toc_extractor.populate_from_ocr(
+            sidecar, issue.issue_pdf, page_count,
+        )
+    except toc_extractor.OCRUnavailable as e:
+        flash(f"OCR unavailable: {e}", "error")
+        return redirect(url_for("mint.issue_view", slug=slug, issue_slug=issue_slug))
+    except Exception as e:
+        flash(f"OCR failed: {e}", "error")
+        return redirect(url_for("mint.issue_view", slug=slug, issue_slug=issue_slug))
+
+    sidecar.save(issue.sidecar_path)
+    if n_arts:
+        flash(f"OCR'd {len(sidecar.toc_pages)} ToC page(s); parsed "
+              f"{n_arts} article(s). Review the rows below and edit "
+              f"any that look off.", "info")
+    else:
+        flash(f"OCR'd {len(sidecar.toc_pages)} ToC page(s) but the parser "
+              f"didn't recognise any articles. The OCR text is saved — "
+              f"you can paste it into the rows manually, or click "
+              f"'Re-parse cached OCR' once the parser improves.",
+              "warning")
+    return redirect(url_for("mint.issue_view", slug=slug, issue_slug=issue_slug))
+
+
+@bp.route("/<slug>/issue/<issue_slug>/reparse", methods=["POST"])
+def issue_reparse(slug: str, issue_slug: str):
+    """Re-parse the cached OCR text without rerunning OCR."""
+    j = _resolve_journal(slug)
+    issue = state.find_issue(j.dir, issue_slug)
+    if issue is None or issue.sidecar is None:
+        abort(404)
+    sidecar = issue.sidecar
+    if not sidecar.toc_ocr_text.strip():
+        flash("No cached OCR text. Run OCR first.", "error")
+        return redirect(url_for("mint.issue_view", slug=slug, issue_slug=issue_slug))
+    from pypdf import PdfReader
+    page_count = len(PdfReader(str(issue.issue_pdf)).pages)
+    n = toc_extractor.reparse_from_cached_ocr(sidecar, page_count)
+    sidecar.save(issue.sidecar_path)
+    flash(f"Re-parsed cached OCR → {n} article(s).", "info")
+    return redirect(url_for("mint.issue_view", slug=slug, issue_slug=issue_slug))
+
+
+@bp.route("/<slug>/issue/<issue_slug>/source.pdf")
+def serve_issue_pdf(slug: str, issue_slug: str):
+    """Serve the whole-issue PDF for inline viewing (helps the user
+    identify which pages are the ToC).
+    """
+    j = _resolve_journal(slug)
+    issue = state.find_issue(j.dir, issue_slug)
+    if issue is None:
+        abort(404)
+    return send_file(
+        str(issue.issue_pdf),
+        mimetype="application/pdf",
+        as_attachment=False,
+        download_name=issue.issue_pdf.name,
+    )
+
+
 @bp.route("/<slug>/issue/<issue_slug>/save", methods=["POST"])
 def issue_save(slug: str, issue_slug: str):
     j = _resolve_journal(slug)
@@ -332,6 +432,37 @@ def _parse_article_rows(form) -> list[Article]:
             authors=authors,
         ))
     return out
+
+
+def _parse_page_list(s: str) -> list[int]:
+    """Parse '1, 2, 3' or '1-3, 7' into [1,2,3] / [1,2,3,7]."""
+    out: list[int] = []
+    if not s:
+        return out
+    for chunk in s.replace(" ", "").split(","):
+        if not chunk:
+            continue
+        if "-" in chunk:
+            try:
+                a, b = (int(x) for x in chunk.split("-", 1))
+                if a <= b:
+                    out.extend(range(a, b + 1))
+            except ValueError:
+                continue
+        else:
+            try:
+                out.append(int(chunk))
+            except ValueError:
+                continue
+    # Dedupe but preserve order
+    seen = set()
+    deduped: list[int] = []
+    for p in out:
+        if p in seen:
+            continue
+        seen.add(p)
+        deduped.append(p)
+    return deduped
 
 
 def _update_doi_map(pdfs_dir: Path, sidecar: IssueSidecar) -> None:

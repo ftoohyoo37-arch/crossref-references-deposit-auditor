@@ -46,6 +46,14 @@ class IssueSidecar:
     month: int = 0             # 1-12; 0 means "unknown"
     issue_title: str = ""      # e.g. "Fall 2025"
     articles: list[Article] = field(default_factory=list)
+    # 1-based page numbers within issue_pdf that contain the table of
+    # contents. Used by the OCR + parse pipeline to lift author / title /
+    # start-page metadata for each article. Empty until the user marks them.
+    toc_pages: list[int] = field(default_factory=list)
+    # Cached OCR text from the most recent run on toc_pages; populated
+    # by the OCR route. Stored here so re-parsing doesn't require
+    # re-OCR'ing.
+    toc_ocr_text: str = ""
 
     @classmethod
     def load(cls, path: Path) -> "IssueSidecar":
