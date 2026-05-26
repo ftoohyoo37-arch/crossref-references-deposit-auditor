@@ -39,6 +39,10 @@ app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 200 * 1024 * 1024  # 200 MB
 app.secret_key = "crossref-auditor-local-only"
 
+# Mount the pipeline UI (Pass 1: journals dashboard + per-journal stage view)
+from pipeline import routes as pipeline_routes  # noqa: E402
+pipeline_routes.register(app)
+
 
 def _load_config() -> AuditorConfig:
     cfg = AuditorConfig.load(CONFIG_PATH)
@@ -97,6 +101,14 @@ def batch_audit():
         raw = file.read()
         if not raw:
             continue
+        # Defensive: some uploads gain leading whitespace/CRLF during
+        # multipart encoding (observed sporadically on Windows for files
+        # whose size hits chunked-encoding boundaries). Trim anything
+        # before the XML declaration so lxml can parse the result.
+        if not raw.startswith(b"<?xml") and not raw.startswith(b"<"):
+            stripped = raw.lstrip()
+            if stripped.startswith(b"<?xml") or stripped.startswith(b"<"):
+                raw = stripped
         findings = audit(raw, cfg)
         try:
             root = ET.fromstring(raw)

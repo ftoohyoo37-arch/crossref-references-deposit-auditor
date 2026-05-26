@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+{% block title %}Pipeline — Journals{% endblock %}
+
+{% block content %}
+<div class="card">
+  <h1>Journals</h1>
+  <p class="muted">
+    Each row reflects the current filesystem state of one journal:
+    how many volumes have PDFs downloaded, batch XMLs extracted,
+    enrichment passes complete, and whether a final deposit XML exists
+    at the project root.
+  </p>
+
+  {% if totals.citations %}
+  <div class="meta-grid" style="margin-top: 1.25rem;">
+    <div><span class="label">Total articles (finalized)</span><span>{{ "{:,}".format(totals.articles) }}</span></div>
+    <div><span class="label">Total citations</span><span>{{ "{:,}".format(totals.citations) }}</span></div>
+    <div><span class="label">Inline DOIs</span><span>{{ "{:,}".format(totals.dois) }} ({{ "%.1f"|format(totals.doi_pct) }}%)</span></div>
+  </div>
+  {% endif %}
+</div>
+
+<div class="pipeline-journals">
+  {% for j in journals %}
+  <div class="card journal-card">
+    <div class="journal-header">
+      <h2><a href="{{ url_for('pipeline.journal_view', slug=j.slug) }}">{{ j.name }}</a></h2>
+      <span class="muted">{{ j.batch_prefix }}</span>
+    </div>
+
+    <div class="stage-pills">
+      <span class="pill {% if j.pdf_file_count %}pill-ok{% else %}pill-empty{% endif %}"
+            title="{{ j.pdf_file_count }} PDFs across {{ j.pdf_volume_count }} volume(s)">
+        Stage 1
+        <small>{{ j.pdf_volume_count }} vol / {{ j.pdf_file_count }} PDFs</small>
+      </span>
+      <span class="pill {% if j.is_extracted %}pill-ok{% else %}pill-empty{% endif %}"
+            title="Batch XMLs in output/">
+        Stage 2
+        <small>{{ j.extracted_count }} extracted</small>
+      </span>
+      <span class="pill {% if j.is_enriched %}pill-ok{% else %}pill-empty{% endif %}"
+            title="Enriched XMLs with inline DOIs">
+        Stage 3
+        <small>{{ j.enriched_count }} enriched</small>
+      </span>
+      <span class="pill {% if j.is_finalized %}pill-ok{% else %}pill-empty{% endif %}"
+            title="<slug>-final.xml at project root">
+        Stage 5
+        <small>
+          {% if j.is_finalized %}
+            {{ "%.0f"|format(j.final_xml_size / 1024) }} KB
+          {% else %}
+            —
+          {% endif %}
+        </small>
+      </span>
+    </div>
+
+    {% if j.is_finalized %}
+    <div class="finalized-row">
+      <span class="label">Deposit-ready</span>
+      <strong>{{ "{:,}".format(j.final_xml_articles) }}</strong> articles &middot;
+      <strong>{{ "{:,}".format(j.final_xml_citations) }}</strong> citations &middot;
+      <strong>{{ "{:,}".format(j.final_xml_dois) }}</strong> w/ DOI
+      ({{ "%.1f"|format(j.doi_pct) }}%)
+      <a class="btn" style="margin-left: auto;"
+         href="{{ url_for('pipeline.serve_final', slug=j.slug) }}">
+        ↓ {{ j.final_xml.name }}
+      </a>
+    </div>
+    {% endif %}
+  </div>
+  {% else %}
+  <div class="card">
+    <p class="muted">No journals found. A journal directory is any folder at the
+    project root that contains a parseable <code>journal.py</code> with
+    <code>JOURNAL_NAME</code> and <code>BATCH_ID_PREFIX</code> defined.</p>
+  </div>
+  {% endfor %}
+</div>
+
+<style>
+  .pipeline-journals .journal-card { padding: 1rem 1.25rem; }
+  .journal-header { display: flex; justify-content: space-between;
+                    align-items: baseline; margin-bottom: 0.5rem; }
+  .journal-header h2 { margin: 0; font-size: 1.15rem; }
+  .journal-header h2 a { color: var(--accent); text-decoration: none; }
+  .journal-header h2 a:hover { text-decoration: underline; }
+
+  .stage-pills { display: flex; gap: 0.5rem; flex-wrap: wrap; margin: 0.5rem 0; }
+  .pill {
+    display: inline-flex; flex-direction: column; align-items: flex-start;
+    padding: 0.3rem 0.7rem; border-radius: 4px;
+    font-family: -apple-system, system-ui, sans-serif;
+    font-size: 0.85rem; line-height: 1.15;
+    border: 1px solid var(--border);
+  }
+  .pill small { font-size: 0.72rem; color: var(--muted); font-weight: normal; }
+  .pill-ok    { background: var(--ok-bg);    color: var(--ok-fg); border-color: #c5dac0; }
+  .pill-empty { background: #f4f1ec; color: var(--muted); }
+
+  .finalized-row {
+    margin-top: 0.6rem; padding: 0.5rem 0.75rem; background: #f4f1ec;
+    border-radius: 4px; display: flex; align-items: center; gap: 0.4rem;
+    flex-wrap: wrap; font-size: 0.92rem;
+  }
+</style>
+{% endblock %}

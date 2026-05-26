@@ -1,0 +1,237 @@
+{% extends "base.html" %}
+{% block title %}{{ j.name }} — Pipeline{% endblock %}
+
+{% block content %}
+<div class="card">
+  <div class="journal-header">
+    <h1>{{ j.name }}</h1>
+    <span class="muted">
+      <a href="{{ url_for('pipeline.dashboard') }}">← All journals</a>
+    </span>
+  </div>
+
+  <div class="meta-grid">
+    <div><span class="label">Batch prefix</span><span>{{ j.batch_prefix }}</span></div>
+    <div><span class="label">PDFs on disk</span><span>{{ j.pdf_volume_count }} vol / {{ j.pdf_file_count }} files</span></div>
+    <div><span class="label">Extracted batches</span><span>{{ j.extracted_count }}</span></div>
+    <div><span class="label">Enriched batches</span><span>{{ j.enriched_count }}</span></div>
+    {% if j.is_finalized %}
+    <div><span class="label">Final XML</span>
+      <span><a href="{{ url_for('pipeline.serve_final', slug=j.slug) }}">{{ j.final_xml.name }}</a>
+            ({{ "%.0f"|format(j.final_xml_size / 1024) }} KB)</span></div>
+    <div><span class="label">Inline DOIs</span>
+      <span>{{ "{:,}".format(j.final_xml_dois) }} / {{ "{:,}".format(j.final_xml_citations) }}
+            ({{ "%.1f"|format(j.doi_pct) }}%)</span></div>
+    {% endif %}
+  </div>
+</div>
+
+<h2 style="margin-top: 1.5rem; font-size: 1.1rem;">Stages</h2>
+
+{% for stage_key, stage in stages.items() %}
+{% set last = last_jobs[stage_key] %}
+<div class="card stage-card" id="stage-{{ stage_key }}">
+  <div class="stage-header">
+    <div>
+      <h3>{{ stage.label }}</h3>
+      <p class="muted">{{ stage.blurb }}</p>
+    </div>
+    <div class="stage-actions">
+      {% if last and last.status == 'running' %}
+        <span class="status-tag running">● Running</span>
+        <form method="POST" action="{{ url_for('pipeline.cancel', job_id=last.id) }}" style="display:inline;">
+          <button type="submit" class="link-btn">Cancel</button>
+        </form>
+      {% elif last and last.status == 'done' %}
+        <span class="status-tag done">✓ Last run OK</span>
+      {% elif last and last.status == 'failed' %}
+        <span class="status-tag failed">✗ Last run failed</span>
+      {% elif last and last.status == 'cancelled' %}
+        <span class="status-tag cancelled">⊘ Cancelled</span>
+      {% else %}
+        <span class="status-tag idle">No runs yet</span>
+      {% endif %}
+
+      <form method="POST" action="{{ url_for('pipeline.run_stage', slug=j.slug, stage=stage_key) }}"
+            style="display:inline;">
+        {% if stage_key == 'enrich' %}
+          <input type="email" name="email" placeholder="deposits@example.org"
+                 value="deposits@example.org"
+                 style="font:inherit; padding: 0.2rem 0.4rem; border: 1px solid var(--border); border-radius: 3px; width: 14rem;">
+        {% endif %}
+        <button type="submit" class="btn">
+          {% if last and last.status == 'running' %}Re-run{% else %}Run{% endif %}
+        </button>
+      </form>
+    </div>
+  </div>
+
+  {% if last %}
+  <div class="last-run-line">
+    <span class="muted">
+      Last job <strong>#{{ last.id }}</strong>
+      &middot; started {{ last.started_at }}
+      {% if last.finished_at %} &middot; finished {{ last.finished_at }}{% endif %}
+      {% if last.exit_code is not none %} &middot; exit {{ last.exit_code }}{% endif %}
+    </span>
+    <button type="button" class="link-btn toggle-log" data-job="{{ last.id }}">
+      View log
+    </button>
+  </div>
+  <div class="log-pane" id="log-{{ last.id }}" data-job="{{ last.id }}" data-status="{{ last.status }}" hidden>
+    <pre class="log-stream"></pre>
+  </div>
+  {% endif %}
+</div>
+{% endfor %}
+
+<div class="card">
+  <h3>Recent jobs</h3>
+  {% if recent %}
+  <table class="recent-jobs">
+    <thead>
+      <tr><th>#</th><th>Stage</th><th>Status</th><th>Started</th><th>Finished</th><th>Exit</th><th>Log</th></tr>
+    </thead>
+    <tbody>
+      {% for r in recent %}
+      <tr>
+        <td>{{ r.id }}</td>
+        <td>{{ r.stage }}</td>
+        <td><span class="status-tag {{ r.status }}">{{ r.status }}</span></td>
+        <td>{{ r.started_at }}</td>
+        <td>{{ r.finished_at or '—' }}</td>
+        <td>{{ r.exit_code if r.exit_code is not none else '—' }}</td>
+        <td>
+          <button type="button" class="link-btn toggle-log" data-job="{{ r.id }}">view</button>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted">No pipeline jobs have run for {{ j.name }} yet.</p>
+  {% endif %}
+</div>
+
+<style>
+  .stage-card .stage-header {
+    display: flex; justify-content: space-between; align-items: flex-start;
+    gap: 1rem;
+  }
+  .stage-card h3 { margin: 0 0 0.2rem 0; font-size: 1rem; }
+  .stage-card .stage-actions {
+    display: flex; flex-direction: column; align-items: flex-end; gap: 0.4rem;
+    flex-shrink: 0;
+  }
+  .status-tag {
+    display: inline-block; padding: 0.15rem 0.5rem; border-radius: 3px;
+    font-family: -apple-system, system-ui, sans-serif; font-size: 0.78rem;
+    text-transform: uppercase; letter-spacing: 0.04em;
+  }
+  .status-tag.idle      { background: #f4f1ec; color: var(--muted); }
+  .status-tag.running   { background: var(--info-bg); color: var(--info-fg); }
+  .status-tag.done      { background: var(--ok-bg); color: var(--ok-fg); }
+  .status-tag.failed    { background: var(--error-bg); color: var(--error-fg); }
+  .status-tag.cancelled { background: var(--warn-bg); color: var(--warn-fg); }
+
+  .last-run-line {
+    margin-top: 0.5rem; display: flex; justify-content: space-between; gap: 0.5rem;
+    align-items: center; flex-wrap: wrap;
+    border-top: 1px dashed var(--border); padding-top: 0.5rem;
+  }
+  .log-pane {
+    margin-top: 0.5rem; background: #1d1916; color: #f4f1ec;
+    border-radius: 4px; padding: 0.75rem; overflow: auto;
+    max-height: 380px;
+  }
+  .log-stream {
+    margin: 0; font-family: ui-monospace, Consolas, monospace;
+    font-size: 0.8rem; white-space: pre-wrap; word-break: break-word;
+  }
+  .log-stream .ev-start  { color: #f4b03c; }
+  .log-stream .ev-done   { color: #87d68c; }
+  .log-stream .ev-recovery { color: #6cb8df; }
+  .log-stream .ev-error  { color: #ff8a8a; }
+
+  .recent-jobs { font-size: 0.88rem; }
+  .recent-jobs td { font-family: -apple-system, system-ui, sans-serif; }
+</style>
+
+<script>
+(function() {
+  // Lazy-open log panes via SSE
+  const panes = {};
+
+  function colorize(line) {
+    // Bold key event lines so they jump out in the scrolling view
+    if (line.startsWith('===') && line.includes('START')) {
+      return '<span class="ev-start">' + escape(line) + '</span>';
+    }
+    if (line.startsWith('===') && line.includes('DONE')) {
+      return '<span class="ev-done">' + escape(line) + '</span>';
+    }
+    if (line.includes('page-break-recovery(')) {
+      return '<span class="ev-recovery">' + escape(line) + '</span>';
+    }
+    if (line.includes('Traceback') || line.includes('!! ') || line.includes('ERROR')) {
+      return '<span class="ev-error">' + escape(line) + '</span>';
+    }
+    return escape(line);
+  }
+  function escape(s) {
+    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  function openPane(jobId) {
+    const pane = document.getElementById('log-' + jobId);
+    if (!pane) return;
+    pane.hidden = false;
+    if (panes[jobId]) return; // already streaming
+
+    const stream = pane.querySelector('.log-stream');
+    stream.innerHTML = '<em style="opacity:0.5;">Connecting…</em>\n';
+
+    const es = new EventSource('{{ url_for("pipeline.dashboard") }}'.replace(/\/$/, '') + '/jobs/' + jobId + '/stream');
+    panes[jobId] = es;
+    let firstChunk = true;
+
+    es.onmessage = function(ev) {
+      if (firstChunk) { stream.innerHTML = ''; firstChunk = false; }
+      stream.innerHTML += colorize(ev.data) + '\n';
+      pane.scrollTop = pane.scrollHeight;
+    };
+    es.addEventListener('end', function(ev) {
+      stream.innerHTML += '\n<em style="opacity:0.6;">— stream closed (' + ev.data + ') —</em>';
+      es.close();
+      delete panes[jobId];
+      // Reload soon so status pills + finalized-row update
+      setTimeout(() => window.location.reload(), 1500);
+    });
+    es.onerror = function() {
+      stream.innerHTML += '\n<em style="opacity:0.6; color:#ff8a8a;">— stream error —</em>';
+      es.close();
+      delete panes[jobId];
+    };
+  }
+
+  document.querySelectorAll('.toggle-log').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const jobId = btn.dataset.job;
+      const pane = document.getElementById('log-' + jobId);
+      if (!pane) return;
+      if (pane.hidden) {
+        openPane(jobId);
+      } else {
+        pane.hidden = true;
+        if (panes[jobId]) { panes[jobId].close(); delete panes[jobId]; }
+      }
+    });
+  });
+
+  // Auto-open any pane that's currently for a running job
+  document.querySelectorAll('.log-pane[data-status="running"]').forEach(pane => {
+    openPane(pane.dataset.job);
+  });
+})();
+</script>
+{% endblock %}

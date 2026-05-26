@@ -4,6 +4,10 @@ audits.db
 audits.db-journal
 uploads/
 samples/
+
+# Pipeline UI subprocess logs (one file per stage run)
+pipeline_logs/
+_auditor.log
 config/auditor_config.json
 config/auditor_config.local.json
 config/crossref_xsd/
