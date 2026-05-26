@@ -324,6 +324,9 @@
   .page-zoom { position: fixed; inset: 0; background: rgba(0,0,0,0.85);
                display: flex; align-items: center; justify-content: center;
                z-index: 999; cursor: zoom-out; }
+  /* HTML `hidden` attribute is the source of truth; CSS must respect it
+     even though .page-zoom sets `display: flex`. */
+  .page-zoom[hidden] { display: none !important; }
   .page-zoom img { max-width: 92vw; max-height: 92vh; box-shadow: 0 0 30px rgba(0,0,0,0.5); }
 
   @media (max-width: 700px) { .wizard-form .form-row { grid-template-columns: 1fr 1fr; } }
