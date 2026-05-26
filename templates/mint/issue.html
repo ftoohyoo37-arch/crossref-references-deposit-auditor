@@ -26,11 +26,59 @@
   <div class="action-row">
     <a class="btn" target="_blank" rel="noopener"
        href="{{ url_for('mint.serve_issue_pdf', slug=j.slug, issue_slug=issue.slug) }}">
-      Open issue PDF ↗
+      Open full PDF ↗
     </a>
     <span class="muted" style="font-size: 0.85rem;">
-      Use the PDF viewer to identify which pages are the ToC and where each article starts.
+      …or use the visual editor below: click pages to mark article starts / ToC / skip.
     </span>
+  </div>
+</div>
+
+<div class="card">
+  <div class="journal-header">
+    <h2 style="margin: 0; font-size: 1.05rem;">Visual editor</h2>
+    <span class="muted" style="font-size: 0.85rem;">
+      {{ page_count }} pages total
+    </span>
+  </div>
+
+  <p class="muted" style="font-size: 0.85rem;">
+    Pick a mode, then click a page. Click again to clear. The article
+    list below auto-derives from the article-start markers; ToC and
+    skip markers are saved alongside.
+  </p>
+
+  <div class="visual-mode-bar">
+    <button type="button" class="mode-btn active" data-mode="zoom">🔍 Zoom</button>
+    <button type="button" class="mode-btn" data-mode="article">🆕 Article start</button>
+    <button type="button" class="mode-btn" data-mode="toc">📋 ToC</button>
+    <button type="button" class="mode-btn" data-mode="skip">⏭️ Skip</button>
+    <span class="muted" style="margin-left: auto; font-size: 0.85rem;"
+          id="visual-status">no changes</span>
+  </div>
+
+  <div id="thumb-grid" class="thumb-grid"
+       data-page-count="{{ page_count }}"
+       data-thumb-url="{{ url_for('mint.serve_thumb', slug=j.slug, issue_slug=issue.slug, page=0)[:-5] }}"
+       data-initial-toc="{{ sidecar.toc_pages|tojson }}"
+       data-initial-skip="{{ sidecar.skip_pages|tojson }}"
+       data-initial-starts="{{ sidecar.articles|map(attribute='start_page')|list|tojson }}">
+    {# JS populates this grid #}
+  </div>
+
+  <form id="visual-save-form" method="POST"
+        action="{{ url_for('mint.visual_save', slug=j.slug, issue_slug=issue.slug) }}"
+        style="margin-top: 0.75rem; display: flex; gap: 0.5rem; align-items: center;">
+    <input type="hidden" name="assignments" id="visual-assignments" value="">
+    <button type="submit" class="btn btn-primary">Save page assignments</button>
+    <span class="muted" style="font-size: 0.85rem;">
+      Article rows below will be rebuilt from the clicked starts (text fields preserved where pages still match).
+    </span>
+  </form>
+
+  <!-- Zoom overlay -->
+  <div id="page-zoom" class="page-zoom" hidden onclick="this.hidden = true;">
+    <img id="page-zoom-img" alt="">
   </div>
 
   {% if sidecar.articles | length == 0 and not sidecar.toc_pages %}
@@ -240,6 +288,158 @@
               font-family: ui-monospace, Consolas, monospace;
               font-size: 0.78rem; white-space: pre-wrap; max-height: 360px;
               overflow: auto; }
+
+  /* Visual editor */
+  .visual-mode-bar { display: flex; gap: 0.4rem; align-items: center;
+                     padding: 0.5rem 0; margin-bottom: 0.5rem;
+                     border-bottom: 1px dashed var(--border); }
+  .mode-btn { background: #f4f1ec; color: var(--fg); border: 1px solid var(--border);
+              padding: 0.3rem 0.7rem; border-radius: 4px; cursor: pointer;
+              font: inherit; font-size: 0.88rem; }
+  .mode-btn:hover { background: #ebe3d4; }
+  .mode-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .thumb-grid { display: grid; gap: 0.5rem;
+                grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+                margin-top: 0.5rem; }
+  .thumb { position: relative; cursor: pointer;
+           border: 3px solid transparent; border-radius: 3px;
+           background: #f4f1ec; padding: 0.2rem; transition: transform 0.05s; }
+  .thumb:hover { transform: translateY(-1px); border-color: #b8a98a; }
+  .thumb img { width: 100%; display: block; border: 1px solid var(--border); }
+  .thumb .pg { position: absolute; top: 0.3rem; left: 0.3rem;
+               background: rgba(0,0,0,0.7); color: #fff; padding: 0 0.4rem;
+               border-radius: 3px; font-family: -apple-system, system-ui, sans-serif;
+               font-size: 0.72rem; font-weight: bold; }
+  .thumb .tag { position: absolute; top: 0.3rem; right: 0.3rem;
+                padding: 0.1rem 0.4rem; border-radius: 3px;
+                font-family: -apple-system, system-ui, sans-serif;
+                font-size: 0.72rem; font-weight: bold; }
+  .thumb.is-article-start { border-color: #4caf50; }
+  .thumb.is-article-start .tag { background: #4caf50; color: #fff; }
+  .thumb.is-toc          { border-color: #2196f3; }
+  .thumb.is-toc .tag     { background: #2196f3; color: #fff; }
+  .thumb.is-skip         { border-color: #9e9e9e; opacity: 0.55; }
+  .thumb.is-skip .tag    { background: #9e9e9e; color: #fff; }
+
+  .page-zoom { position: fixed; inset: 0; background: rgba(0,0,0,0.85);
+               display: flex; align-items: center; justify-content: center;
+               z-index: 999; cursor: zoom-out; }
+  .page-zoom img { max-width: 92vw; max-height: 92vh; box-shadow: 0 0 30px rgba(0,0,0,0.5); }
+
   @media (max-width: 700px) { .wizard-form .form-row { grid-template-columns: 1fr 1fr; } }
 </style>
+
+<script>
+(function() {
+  const grid = document.getElementById("thumb-grid");
+  if (!grid) return;
+  const pageCount = parseInt(grid.dataset.pageCount || "0", 10);
+  // data-thumb-url comes in shape "/mint/<slug>/issue/<iss>/thumb/" — append <n>.png
+  const thumbBase = grid.dataset.thumbUrl;
+  const initToc = JSON.parse(grid.dataset.initialToc || "[]");
+  const initSkip = JSON.parse(grid.dataset.initialSkip || "[]");
+  const initStarts = JSON.parse(grid.dataset.initialStarts || "[]");
+
+  // State: page → "article" | "toc" | "skip" | undefined
+  const state = {};
+  initToc.forEach(p => state[p] = "toc");
+  initSkip.forEach(p => state[p] = "skip");
+  initStarts.forEach(p => state[p] = "article");
+
+  let mode = "zoom";
+  const statusEl = document.getElementById("visual-status");
+  function updateStatus() {
+    const counts = {article: 0, toc: 0, skip: 0};
+    Object.values(state).forEach(v => { if (counts[v] !== undefined) counts[v]++; });
+    statusEl.textContent =
+      `${counts.article} article start(s), ${counts.toc} ToC, ${counts.skip} skip`;
+  }
+
+  function setMode(m) {
+    mode = m;
+    document.querySelectorAll(".mode-btn").forEach(b => {
+      b.classList.toggle("active", b.dataset.mode === m);
+    });
+  }
+  document.querySelectorAll(".mode-btn").forEach(b => {
+    b.addEventListener("click", () => setMode(b.dataset.mode));
+  });
+
+  function applyClass(thumb, page) {
+    thumb.classList.remove("is-article-start", "is-toc", "is-skip");
+    const tag = thumb.querySelector(".tag");
+    tag.textContent = "";
+    const s = state[page];
+    if (s === "article") { thumb.classList.add("is-article-start"); tag.textContent = "START"; }
+    else if (s === "toc")   { thumb.classList.add("is-toc"); tag.textContent = "ToC"; }
+    else if (s === "skip")  { thumb.classList.add("is-skip"); tag.textContent = "SKIP"; }
+  }
+
+  const zoomEl = document.getElementById("page-zoom");
+  const zoomImg = document.getElementById("page-zoom-img");
+
+  function buildThumb(page) {
+    const t = document.createElement("div");
+    t.className = "thumb";
+    t.dataset.page = String(page);
+    const pgLabel = document.createElement("span");
+    pgLabel.className = "pg";
+    pgLabel.textContent = `p${page}`;
+    const tag = document.createElement("span");
+    tag.className = "tag";
+    const img = document.createElement("img");
+    img.loading = "lazy";
+    img.alt = `page ${page}`;
+    img.src = `${thumbBase}${page}.png`;
+    t.appendChild(pgLabel);
+    t.appendChild(tag);
+    t.appendChild(img);
+    applyClass(t, page);
+
+    t.addEventListener("click", (ev) => {
+      ev.preventDefault();
+      if (mode === "zoom") {
+        // Higher-res preview overlay
+        zoomImg.src = `${thumbBase}${page}.png?dpi=220`;
+        zoomEl.hidden = false;
+        return;
+      }
+      // Toggle: clicking a page already in the same mode clears it;
+      // otherwise overwrite with the current mode.
+      if (state[page] === mode) {
+        delete state[page];
+      } else {
+        state[page] = mode;
+      }
+      applyClass(t, page);
+      updateStatus();
+    });
+    return t;
+  }
+
+  // Build grid
+  for (let p = 1; p <= pageCount; p++) {
+    grid.appendChild(buildThumb(p));
+  }
+  updateStatus();
+
+  // On submit, serialize state into the hidden field
+  const form = document.getElementById("visual-save-form");
+  form.addEventListener("submit", () => {
+    const toc = [], skip = [], starts = [];
+    for (const [k, v] of Object.entries(state)) {
+      const p = parseInt(k, 10);
+      if (v === "toc")     toc.push(p);
+      else if (v === "skip")    skip.push(p);
+      else if (v === "article") starts.push(p);
+    }
+    toc.sort((a,b) => a - b);
+    skip.sort((a,b) => a - b);
+    starts.sort((a,b) => a - b);
+    document.getElementById("visual-assignments").value = JSON.stringify({
+      toc, skip, article_starts: starts,
+    });
+  });
+})();
+</script>
 {% endblock %}

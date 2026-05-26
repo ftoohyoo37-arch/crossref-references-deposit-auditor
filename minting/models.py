@@ -50,6 +50,10 @@ class IssueSidecar:
     # contents. Used by the OCR + parse pipeline to lift author / title /
     # start-page metadata for each article. Empty until the user marks them.
     toc_pages: list[int] = field(default_factory=list)
+    # Pages explicitly marked "not part of any article" via the visual
+    # editor — covers, ads, blank pages, back matter. Splitter and DOI
+    # assignment skip these.
+    skip_pages: list[int] = field(default_factory=list)
     # Cached OCR text from the most recent run on toc_pages; populated
     # by the OCR route. Stored here so re-parsing doesn't require
     # re-OCR'ing.

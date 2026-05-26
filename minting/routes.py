@@ -24,7 +24,7 @@ from flask import (
 )
 
 from pipeline import discovery
-from . import state, splitter, toc_extractor, deposit_builder
+from . import state, splitter, toc_extractor, deposit_builder, thumbnails
 from .models import Article, IssueSidecar
 
 
@@ -233,6 +233,106 @@ def issue_reparse(slug: str, issue_slug: str):
     n = toc_extractor.reparse_from_cached_ocr(sidecar, page_count)
     sidecar.save(issue.sidecar_path)
     flash(f"Re-parsed cached OCR → {n} article(s).", "info")
+    return redirect(url_for("mint.issue_view", slug=slug, issue_slug=issue_slug))
+
+
+@bp.route("/<slug>/issue/<issue_slug>/thumb/<int:page>.png")
+def serve_thumb(slug: str, issue_slug: str, page: int):
+    """Serve a per-page PNG thumbnail of the issue PDF (cached on disk)."""
+    j = _resolve_journal(slug)
+    issue = state.find_issue(j.dir, issue_slug)
+    if issue is None:
+        abort(404)
+    dpi = request.args.get("dpi", type=int) or thumbnails.THUMB_DPI
+    # Clamp DPI so an attacker can't ask for a 9999-DPI render
+    dpi = max(60, min(dpi, 240))
+    try:
+        target = thumbnails.render_thumb(
+            issue.issue_pdf, page, j.slug, issue_slug, dpi=dpi,
+        )
+    except thumbnails.ThumbnailError as e:
+        abort(503, description=str(e))
+    except Exception as e:
+        abort(500, description=f"Failed to render page {page}: {e}")
+    return send_file(str(target), mimetype="image/png",
+                     max_age=3600)
+
+
+@bp.route("/<slug>/issue/<issue_slug>/visual_save", methods=["POST"])
+def visual_save(slug: str, issue_slug: str):
+    """Save page assignments produced by the visual editor.
+
+    Accepts a JSON-encoded body in `assignments` of the form:
+        {"toc": [1, 2], "skip": [12], "article_starts": [3, 7, 10]}
+
+    Reconstructs the article list from `article_starts`:
+      - Each consecutive pair (s_i, s_{i+1}) becomes an article with
+        start_page=s_i, end_page=s_{i+1} - 1 (then trimmed past any
+        skip pages).
+      - The last article runs from its start to the PDF page_count,
+        again trimmed.
+      - Existing article rows (titles/authors/filenames) are kept
+        when their start_page matches the new boundaries.
+    """
+    j = _resolve_journal(slug)
+    issue = state.find_issue(j.dir, issue_slug)
+    if issue is None:
+        abort(404)
+    sidecar = issue.sidecar or IssueSidecar.new_for(issue.issue_pdf)
+
+    raw = (request.form.get("assignments") or "").strip()
+    if not raw:
+        flash("No page assignments submitted.", "error")
+        return redirect(url_for("mint.issue_view", slug=slug, issue_slug=issue_slug))
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as e:
+        flash(f"Could not parse assignments JSON: {e}", "error")
+        return redirect(url_for("mint.issue_view", slug=slug, issue_slug=issue_slug))
+
+    from pypdf import PdfReader
+    try:
+        page_count = len(PdfReader(str(issue.issue_pdf)).pages)
+    except Exception:
+        page_count = 0
+
+    toc_pages = sorted({int(p) for p in data.get("toc", []) if 1 <= int(p) <= page_count})
+    skip_pages = sorted({int(p) for p in data.get("skip", []) if 1 <= int(p) <= page_count})
+    starts = sorted({int(p) for p in data.get("article_starts", []) if 1 <= int(p) <= page_count})
+
+    sidecar.toc_pages = toc_pages
+    sidecar.skip_pages = skip_pages
+
+    # Reconstruct articles from starts. Preserve text fields from any
+    # existing row whose start_page matches a new boundary.
+    existing_by_start = {a.start_page: a for a in sidecar.articles}
+    new_articles: list[Article] = []
+    for i, s in enumerate(starts):
+        if i + 1 < len(starts):
+            end = starts[i + 1] - 1
+        else:
+            end = page_count
+        # Trim trailing skip/ToC pages off the end
+        while end >= s and (end in skip_pages or end in toc_pages):
+            end -= 1
+        if end < s:
+            continue
+        prev = existing_by_start.get(s)
+        new_articles.append(Article(
+            start_page=s, end_page=end,
+            filename=prev.filename if prev else "",
+            title=prev.title if prev else "",
+            authors=(prev.authors if prev else []),
+            sequence=i + 1,
+            doi=prev.doi if prev else "",
+            resource_url=prev.resource_url if prev else "",
+            abstract=prev.abstract if prev else "",
+        ))
+    sidecar.articles = new_articles
+    sidecar.save(issue.sidecar_path)
+    flash(f"Saved page assignments → {len(new_articles)} article(s); "
+          f"{len(toc_pages)} ToC page(s); {len(skip_pages)} skip page(s).",
+          "info")
     return redirect(url_for("mint.issue_view", slug=slug, issue_slug=issue_slug))
 
 
