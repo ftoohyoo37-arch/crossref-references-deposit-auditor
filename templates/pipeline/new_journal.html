@@ -1,0 +1,188 @@
+{% extends "base.html" %}
+{% block title %}New Journal — Pipeline{% endblock %}
+
+{% block content %}
+
+{% if step == "url" %}
+<div class="card">
+  <h1>Add a journal</h1>
+  <p class="muted">
+    Paste the URL of your journal's archive (or any issue/volume page).
+    The wizard will sniff the response to figure out which platform it's on,
+    then pre-fill a config form on the next step.
+  </p>
+
+  <form method="POST" action="{{ url_for('pipeline.new_journal_probe') }}" class="wizard-form">
+    <label class="block">
+      <span class="label">Archive URL</span>
+      <input type="url" name="url" required
+             placeholder="https://wac.colostate.edu/atd/archives/"
+             autofocus
+             style="width: 100%; padding: 0.4rem 0.6rem; border: 1px solid var(--border); border-radius: 3px; font: inherit;">
+    </label>
+    <div class="form-actions">
+      <button type="submit" class="btn">Probe →</button>
+      <a href="{{ url_for('pipeline.dashboard') }}" class="link-btn">Cancel</a>
+    </div>
+  </form>
+
+  <div class="platform-list">
+    <h3>Supported platforms</h3>
+    <ul>
+      {% for p in platforms %}
+      <li>
+        <strong>{{ p.label }}</strong>
+        {% if p.key == 'wac' %}
+          <span class="muted">— auto-detected from <code>wac.colostate.edu</code> /
+          <code>wacclearinghouse.org</code> URLs.</span>
+        {% elif p.key == 'ojs' %}
+          <span class="muted">— auto-detected from <code>/index.php/&lt;journal&gt;/</code>
+          URL patterns or the OJS generator meta tag.</span>
+        {% elif p.key == 'unknown' %}
+          <span class="muted">— fallback if no platform matches; you'll need to
+          hand-edit the generated <code>downloader.py</code>.</span>
+        {% endif %}
+      </li>
+      {% endfor %}
+    </ul>
+  </div>
+</div>
+
+<style>
+  .wizard-form .block { display: block; margin: 0.75rem 0; }
+  .wizard-form .form-actions { display: flex; align-items: center; gap: 0.75rem;
+                               margin-top: 1rem; }
+  .platform-list { margin-top: 1.5rem; padding-top: 1rem;
+                   border-top: 1px solid var(--border); font-size: 0.92rem; }
+  .platform-list h3 { font-size: 0.95rem; margin-bottom: 0.4rem; }
+  .platform-list ul { padding-left: 1.2rem; }
+  .platform-list li { margin-bottom: 0.4rem; }
+</style>
+{% endif %}
+
+
+{% if step == "configure" %}
+<div class="card">
+  <div class="journal-header">
+    <h1>Configure new journal</h1>
+    <span class="muted">
+      <a href="{{ url_for('pipeline.new_journal') }}">← Back</a>
+    </span>
+  </div>
+
+  <div class="probe-result">
+    <div class="meta-grid">
+      <div><span class="label">Probed URL</span>
+        <span><a href="{{ probe.url }}" target="_blank" rel="noopener">{{ probe.url }}</a></span></div>
+      {% if probe.final_url and probe.final_url != probe.url %}
+      <div><span class="label">After redirects</span>
+        <span><code>{{ probe.final_url }}</code></span></div>
+      {% endif %}
+      <div><span class="label">Page title</span>
+        <span>{{ probe.page_title or '—' }}</span></div>
+      <div><span class="label">Detected platform</span>
+        <span><strong>{{ probe.platform_label }}</strong></span></div>
+      {% if not probe.ok %}
+      <div><span class="label">Status</span>
+        <span class="sev-error">{{ probe.error }}</span></div>
+      {% endif %}
+    </div>
+
+    {% if platform.notes %}
+    <div class="platform-notes">
+      <strong>Notes for this platform:</strong>
+      <ul>
+        {% for note in platform.notes %}
+        <li>{{ note }}</li>
+        {% endfor %}
+      </ul>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+<div class="card">
+  <h2 style="font-size: 1.05rem; margin-top: 0;">Identity</h2>
+  <form method="POST" action="{{ url_for('pipeline.new_journal_create') }}" class="wizard-form">
+    <input type="hidden" name="archive_url" value="{{ probe.final_url or probe.url }}">
+    <input type="hidden" name="platform_key" value="{{ probe.platform_key }}">
+
+    <div class="form-row">
+      <label class="block">
+        <span class="label">Journal name</span>
+        <input type="text" name="name" required minlength="2" maxlength="80"
+               value="{{ form_values.name if form_values else probe.name_guess }}"
+               style="width: 100%; padding: 0.4rem 0.6rem; border: 1px solid var(--border); border-radius: 3px; font: inherit;">
+        <small class="muted">Human-readable. Used as the directory name.</small>
+      </label>
+      <label class="block">
+        <span class="label">Slug</span>
+        <input type="text" name="slug" required pattern="[a-z0-9][a-z0-9-]*"
+               value="{{ form_values.slug if form_values else probe.slug_guess }}"
+               style="width: 100%; padding: 0.4rem 0.6rem; border: 1px solid var(--border); border-radius: 3px; font: inherit;">
+        <small class="muted">Lowercase, dashes only. Used in URLs and the deposit file name.</small>
+      </label>
+    </div>
+
+    <label class="block">
+      <span class="label">Batch ID prefix</span>
+      <input type="text" name="batch_prefix" required
+             value="{{ form_values.batch_prefix if form_values else probe.batch_prefix_guess }}"
+             style="width: 100%; padding: 0.4rem 0.6rem; border: 1px solid var(--border); border-radius: 3px; font: inherit;">
+      <small class="muted">Prefix for per-batch XML filenames. Convention: <code>&lt;slug&gt;-volume</code> or <code>&lt;slug&gt;-issue</code>.</small>
+    </label>
+
+    <h2 style="font-size: 1.05rem; margin-top: 1.5rem;">Extraction</h2>
+    <label class="block">
+      <span class="label">Force-OCR volumes</span>
+      <input type="text" name="force_ocr_volumes"
+             placeholder="1, 2, 3-5"
+             value="{{ form_values.force_ocr_volumes if form_values }}"
+             style="width: 100%; padding: 0.4rem 0.6rem; border: 1px solid var(--border); border-radius: 3px; font: inherit;">
+      <small class="muted">Comma-separated list / ranges of volume numbers. Leave blank if all
+      volumes are born-digital. The sampler will tell you which need OCR.</small>
+    </label>
+
+    <h2 style="font-size: 1.05rem; margin-top: 1.5rem;">Depositor</h2>
+    <p class="muted" style="margin: 0.3rem 0 0.75rem 0; font-size: 0.85rem;">
+      These are saved to <code>&lt;Journal&gt;/depositor.json</code>, which is gitignored.
+    </p>
+    <div class="form-row">
+      <label class="block">
+        <span class="label">Depositor name</span>
+        <input type="text" name="depositor_name"
+               value="{{ form_values.depositor_name if form_values else '' }}"
+               placeholder="WAC Clearinghouse"
+               style="width: 100%; padding: 0.4rem 0.6rem; border: 1px solid var(--border); border-radius: 3px; font: inherit;">
+      </label>
+      <label class="block">
+        <span class="label">Depositor email</span>
+        <input type="email" name="depositor_email"
+               value="{{ form_values.depositor_email if form_values else '' }}"
+               placeholder="deposits@example.org"
+               style="width: 100%; padding: 0.4rem 0.6rem; border: 1px solid var(--border); border-radius: 3px; font: inherit;">
+      </label>
+    </div>
+
+    <div class="form-actions" style="margin-top: 1.25rem;">
+      <button type="submit" class="btn btn-primary">Create journal</button>
+      <a href="{{ url_for('pipeline.new_journal') }}" class="link-btn">Start over</a>
+    </div>
+  </form>
+</div>
+
+<style>
+  .platform-notes { margin-top: 0.8rem; padding: 0.6rem 0.75rem;
+                    background: var(--info-bg); color: var(--info-fg);
+                    border-radius: 4px; font-size: 0.9rem; }
+  .platform-notes ul { margin: 0.2rem 0 0 1.2rem; padding: 0; }
+  .wizard-form .block { display: block; margin: 0.5rem 0; }
+  .wizard-form .form-row { display: grid; grid-template-columns: 1fr 1fr;
+                           gap: 1rem; }
+  .wizard-form small { display: block; margin-top: 0.2rem; font-size: 0.78rem; }
+  .wizard-form .form-actions { display: flex; align-items: center; gap: 0.75rem; }
+  @media (max-width: 700px) { .wizard-form .form-row { grid-template-columns: 1fr; } }
+</style>
+{% endif %}
+
+{% endblock %}

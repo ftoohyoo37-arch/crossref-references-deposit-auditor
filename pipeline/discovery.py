@@ -175,7 +175,15 @@ def discover_journals() -> list[JournalState]:
         if not name or not prefix:
             continue
 
-        slug = URL_SLUGS.get(name, d.name.lower().replace(" ", "-"))
+        # Prefer JOURNAL_SLUG from journal.py (canonical, defined per-journal);
+        # fall back to the hand-maintained URL_SLUGS map, then to a slugified
+        # directory name.
+        explicit_slug = getattr(mod, "JOURNAL_SLUG", None)
+        slug = (
+            explicit_slug
+            or URL_SLUGS.get(name)
+            or d.name.lower().replace(" ", "-")
+        )
         vol_count, pdf_count = _count_pdfs(d)
         out_dir = d / "output"
         enriched_dir = d / "Structured Scraper" / "enriched"

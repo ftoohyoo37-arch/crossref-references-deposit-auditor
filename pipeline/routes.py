@@ -2,6 +2,9 @@
 
 Mounted at /pipeline on the main Auditor app. Provides:
     GET  /pipeline                              dashboard (all journals)
+    GET  /pipeline/new                          New Journal wizard step 1
+    POST /pipeline/new/probe                    detect platform from URL
+    POST /pipeline/new/create                   commit a new journal scaffold
     GET  /pipeline/<slug>                       per-journal stage view
     POST /pipeline/<slug>/run/<stage>           kick off a stage
     POST /pipeline/jobs/<job_id>/cancel         best-effort cancel
@@ -12,6 +15,7 @@ Mounted at /pipeline on the main Auditor app. Provides:
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 from flask import (
@@ -19,7 +23,7 @@ from flask import (
     request, send_file, url_for, stream_with_context, flash,
 )
 
-from . import discovery, jobs
+from . import discovery, jobs, detection, platforms as platforms_mod
 
 
 bp = Blueprint("pipeline", __name__, url_prefix="/pipeline",
@@ -162,6 +166,130 @@ def serve_final(slug: str):
         as_attachment=True,
         download_name=j.final_xml.name,
     )
+
+
+# --------------------- New Journal wizard ---------------------------
+
+@bp.route("/new", methods=["GET"])
+def new_journal():
+    """Step 1 of the wizard — show the URL input + a list of supported platforms."""
+    return render_template("pipeline/new_journal.html",
+                           step="url",
+                           platforms=platforms_mod.PLATFORMS)
+
+
+@bp.route("/new/probe", methods=["POST"])
+def new_journal_probe():
+    """Step 2 of the wizard — probe the URL + show pre-filled identity form."""
+    url = (request.form.get("url") or "").strip()
+    if not url:
+        flash("Please enter an archive URL.", "error")
+        return redirect(url_for("pipeline.new_journal"))
+    result = detection.probe(url)
+    platform = platforms_mod.by_key(result.platform_key)
+    return render_template("pipeline/new_journal.html",
+                           step="configure",
+                           platforms=platforms_mod.PLATFORMS,
+                           probe=result, platform=platform)
+
+
+_NAME_OK = re.compile(r"^[A-Za-z0-9 .,'&():\-_]{2,80}$")
+_SLUG_OK = re.compile(r"^[a-z0-9][a-z0-9-]{0,40}$")
+
+
+def _validate_form(form) -> tuple[dict, list[str]]:
+    """Pull form fields into a context dict; return (ctx, errors)."""
+    errors: list[str] = []
+    ctx = {
+        "name": (form.get("name") or "").strip(),
+        "slug": (form.get("slug") or "").strip().lower(),
+        "batch_prefix": (form.get("batch_prefix") or "").strip(),
+        "archive_url": (form.get("archive_url") or "").strip(),
+        "platform_key": (form.get("platform_key") or "unknown").strip(),
+        "depositor_name": (form.get("depositor_name") or "").strip(),
+        "depositor_email": (form.get("depositor_email") or "").strip(),
+    }
+    # Parse force_ocr_volumes ("1,2,3-5" → [1,2,3,4,5])
+    raw = (form.get("force_ocr_volumes") or "").strip()
+    vols: list[int] = []
+    if raw:
+        for chunk in raw.replace(" ", "").split(","):
+            if not chunk:
+                continue
+            if "-" in chunk:
+                try:
+                    a, b = [int(x) for x in chunk.split("-", 1)]
+                    vols.extend(range(a, b + 1))
+                except ValueError:
+                    errors.append(f"Bad volume range: '{chunk}'")
+            else:
+                try:
+                    vols.append(int(chunk))
+                except ValueError:
+                    errors.append(f"Bad volume: '{chunk}'")
+    ctx["force_ocr_volumes"] = sorted(set(vols))
+
+    if not _NAME_OK.match(ctx["name"]):
+        errors.append("Name must be 2-80 chars, ASCII letters/digits/punctuation.")
+    if not _SLUG_OK.match(ctx["slug"]):
+        errors.append("Slug must be lowercase letters/digits/dashes, "
+                      "1-40 chars, starting with a letter or digit.")
+    if not ctx["batch_prefix"]:
+        ctx["batch_prefix"] = f"{ctx['slug']}-volume"
+    # Base URL inferred from archive URL
+    from urllib.parse import urlparse
+    p = urlparse(ctx["archive_url"])
+    if p.scheme and p.netloc:
+        ctx["base_url"] = f"{p.scheme}://{p.netloc}"
+    if ctx["depositor_email"] and "@" not in ctx["depositor_email"]:
+        errors.append("Depositor email looks malformed.")
+    return ctx, errors
+
+
+@bp.route("/new/create", methods=["POST"])
+def new_journal_create():
+    """Step 3 of the wizard — actually write the journal scaffold to disk."""
+    ctx, errors = _validate_form(request.form)
+    if errors:
+        for e in errors:
+            flash(e, "error")
+        # Reconstruct a probe-like object so the form re-renders with their input
+        probe = detection.ProbeResult(
+            url=ctx["archive_url"], final_url=ctx["archive_url"],
+            platform_key=ctx["platform_key"],
+            platform_label=platforms_mod.by_key(ctx["platform_key"]).label,
+            name_guess=ctx["name"], slug_guess=ctx["slug"],
+            batch_prefix_guess=ctx["batch_prefix"],
+            ok=True,
+        )
+        platform = platforms_mod.by_key(ctx["platform_key"])
+        return render_template("pipeline/new_journal.html",
+                               step="configure",
+                               platforms=platforms_mod.PLATFORMS,
+                               probe=probe, platform=platform,
+                               form_values=ctx)
+
+    # Resolve the target directory: <project root>/<name>
+    journal_dir = discovery.PROJECT_ROOT / ctx["name"]
+    if journal_dir.exists() and any(journal_dir.iterdir()):
+        flash(f"A non-empty directory '{ctx['name']}' already exists. "
+              f"Choose a different name, or remove the existing dir first.",
+              "error")
+        return redirect(url_for("pipeline.new_journal"))
+
+    platform = platforms_mod.by_key(ctx["platform_key"])
+    try:
+        platform.scaffold(journal_dir, ctx)
+    except Exception as e:
+        flash(f"Scaffolding failed: {e}", "error")
+        return redirect(url_for("pipeline.new_journal"))
+
+    flash(f"Created journal '{ctx['name']}' at {journal_dir}. "
+          f"Next: review the generated files, then download PDFs.",
+          "info")
+    # Redirect to the per-journal page (the slug we registered in URL_SLUGS
+    # won't include this new journal — fall back to the legible slug we got)
+    return redirect(url_for("pipeline.journal_view", slug=ctx["slug"]))
 
 
 def register(app) -> None:
