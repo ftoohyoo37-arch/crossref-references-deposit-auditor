@@ -8,10 +8,32 @@ sidecars are treated as "not yet split."
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from .models import IssueSidecar
+
+
+_VOLISS_SLUG = re.compile(r"^v(\d+)(?:i(\d+))?$", re.IGNORECASE)
+
+
+def _issue_sort_key(slug: str) -> tuple:
+    """Chronological key for an issue slug.
+
+    'v1i1' / 'v1i2' / 'v10i1' sort as (1,1) < (1,2) < (10,1), which
+    is the actual publication order rather than lexical (which puts
+    v10i1 before v1i1 because '0' < 'i' in ASCII).
+
+    Slugs that don't match the v<N>i<M> shape sort to the end,
+    keyed by the raw string so they're still stable.
+    """
+    m = _VOLISS_SLUG.match(slug)
+    if not m:
+        return (10**9, 10**9, slug)
+    vol = int(m.group(1))
+    iss = int(m.group(2)) if m.group(2) else 0
+    return (vol, iss, slug)
 
 
 @dataclass
@@ -54,7 +76,8 @@ def list_issues(journal_dir: Path) -> list[IssueState]:
     if not issues_root.is_dir():
         return []
     out: list[IssueState] = []
-    for pdf in sorted(issues_root.glob("*.pdf")):
+    for pdf in sorted(issues_root.glob("*.pdf"),
+                       key=lambda p: _issue_sort_key(p.stem)):
         slug = pdf.stem
         sidecar_path = pdf.with_suffix(".json")
         sidecar = None
