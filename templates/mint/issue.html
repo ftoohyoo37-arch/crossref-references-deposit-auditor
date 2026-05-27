@@ -178,7 +178,10 @@
     <p class="muted" style="font-size: 0.85rem;">
       Each row becomes one per-article PDF on split, and one
       <code>&lt;journal_article&gt;</code> in the content-registration XML.
-      Page numbers are 1-based and inclusive.
+      Page numbers are 1-based and inclusive. Two-column journals where
+      article N ends on the same page article N+1 starts — set article N's
+      <em>end_page</em> equal to article N+1's <em>start_page</em>; the
+      shared page will appear in both per-article PDFs.
     </p>
 
     <table class="article-rows">

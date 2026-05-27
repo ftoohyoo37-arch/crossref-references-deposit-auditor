@@ -52,16 +52,24 @@ def validate_boundaries(sidecar: IssueSidecar, page_count: int) -> list[str]:
             errors.append(f"{prefix}: start_page > end_page "
                           f"({art.start_page} > {art.end_page}).")
 
-    # Overlap detection
+    # Boundary sanity. Two-column journals routinely have one article
+    # ending on the same page another article starts on (article N ends
+    # in column 2, article N+1 begins in column 1 of the same page), so
+    # a single-page overlap is allowed and just produces a duplicate
+    # page in both per-article PDFs — fine for downstream reference
+    # extraction. We only reject "swallowing" overlaps where one
+    # article fully contains another, which is almost always a typo.
     sorted_arts = sorted(
         enumerate(sidecar.articles, start=1),
-        key=lambda x: x[1].start_page,
+        key=lambda x: (x[1].start_page, x[1].end_page),
     )
     for (i_a, art_a), (i_b, art_b) in zip(sorted_arts, sorted_arts[1:]):
-        if art_a.end_page >= art_b.start_page:
+        if art_a.end_page > art_b.end_page:
             errors.append(
                 f"Article {i_a} (pp.{art_a.start_page}-{art_a.end_page}) "
-                f"overlaps Article {i_b} (pp.{art_b.start_page}-{art_b.end_page})."
+                f"fully contains Article {i_b} "
+                f"(pp.{art_b.start_page}-{art_b.end_page}). Did you mean "
+                f"to set Article {i_a}'s end_page lower?"
             )
 
     return errors
