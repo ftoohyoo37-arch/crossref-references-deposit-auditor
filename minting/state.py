@@ -38,6 +38,10 @@ def _issue_sort_key(slug: str) -> tuple:
 
 @dataclass
 class IssueState:
+    # issue_pdf may not exist for issues where the journal publishes
+    # per-article PDFs directly (no whole-issue bundle). In that case
+    # the visual editor + splitter are not applicable, but article
+    # rows + DOI minting still work from the sidecar alone.
     issue_pdf: Path
     slug: str
     sidecar_path: Path
@@ -51,6 +55,10 @@ class IssueState:
     @property
     def has_sidecar(self) -> bool:
         return self.sidecar_path.exists() and self.sidecar is not None
+
+    @property
+    def has_issue_pdf(self) -> bool:
+        return self.issue_pdf.exists() and self.issue_pdf.suffix.lower() == ".pdf"
 
     @property
     def is_split(self) -> bool:
@@ -68,18 +76,30 @@ def _issue_split_dir(journal_dir: Path, slug: str) -> Path:
 
 
 def list_issues(journal_dir: Path) -> list[IssueState]:
-    """Walk <Journal>/issue_pdfs/ and return one IssueState per .pdf.
+    """Return one IssueState per issue known to the minting workflow.
+
+    An issue is discovered if EITHER:
+      - <Journal>/issue_pdfs/<slug>.pdf exists (whole-issue PDF, splittable), OR
+      - <Journal>/issue_pdfs/<slug>.json exists (sidecar; article rows can
+        be populated directly without a whole-issue PDF — used for journals
+        that publish per-article PDFs natively).
 
     Quiet if the directory doesn't exist.
     """
     issues_root = journal_dir / "issue_pdfs"
     if not issues_root.is_dir():
         return []
+
+    # Collect slugs from both .pdf and .json files in issue_pdfs/.
+    slugs: set[str] = set()
+    for f in issues_root.iterdir():
+        if f.suffix.lower() in (".pdf", ".json"):
+            slugs.add(f.stem)
+
     out: list[IssueState] = []
-    for pdf in sorted(issues_root.glob("*.pdf"),
-                       key=lambda p: _issue_sort_key(p.stem)):
-        slug = pdf.stem
-        sidecar_path = pdf.with_suffix(".json")
+    for slug in sorted(slugs, key=_issue_sort_key):
+        pdf_path = issues_root / f"{slug}.pdf"
+        sidecar_path = issues_root / f"{slug}.json"
         sidecar = None
         if sidecar_path.exists():
             try:
@@ -99,7 +119,7 @@ def list_issues(journal_dir: Path) -> list[IssueState]:
             except Exception:
                 pass
         out.append(IssueState(
-            issue_pdf=pdf, slug=slug,
+            issue_pdf=pdf_path, slug=slug,
             sidecar_path=sidecar_path, sidecar=sidecar,
             split_dir=split_dir, split_count=split_count,
             has_doi_map=doi_map.exists(),

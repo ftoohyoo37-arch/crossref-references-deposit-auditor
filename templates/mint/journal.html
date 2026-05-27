@@ -53,6 +53,9 @@
             <br><span class="muted">{{ issue.sidecar.issue_title or '' }}
             v{{ issue.sidecar.volume }} n{{ issue.sidecar.issue }}, {{ issue.sidecar.year }}</span>
           {% endif %}
+          {% if not issue.has_issue_pdf %}
+            <br><span class="muted" style="font-size: 0.75rem;">per-article only</span>
+          {% endif %}
         </td>
         <td>
           {% if issue.has_sidecar %}
@@ -65,6 +68,8 @@
         <td>
           {% if issue.is_split %}
             <span class="pill pill-ok">{{ issue.split_count }} files</span>
+          {% elif not issue.has_issue_pdf %}
+            <span class="pill pill-empty">n/a</span>
           {% else %}
             <span class="pill pill-empty">—</span>
           {% endif %}

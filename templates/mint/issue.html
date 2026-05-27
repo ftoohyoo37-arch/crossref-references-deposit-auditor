@@ -11,9 +11,15 @@
   </div>
   <div class="meta-grid">
     <div><span class="label">Source PDF</span>
-      <span><code>{{ issue.issue_pdf.name }}</code></span></div>
+      <span>
+        {% if issue.has_issue_pdf %}
+          <code>{{ issue.issue_pdf.name }}</code>
+        {% else %}
+          <em class="muted">none (per-article-only)</em>
+        {% endif %}
+      </span></div>
     <div><span class="label">Total pages</span>
-      <span>{{ page_count }}</span></div>
+      <span>{% if page_count %}{{ page_count }}{% else %}—{% endif %}</span></div>
     <div><span class="label">Sidecar</span>
       <span>
         {% if issue.has_sidecar %}<code>{{ issue.sidecar_path.name }}</code> (saved)
@@ -23,6 +29,7 @@
       <span>{{ issue.split_count }} in <code>pdfs/{{ issue.slug }}/</code></span></div>
   </div>
 
+  {% if issue.has_issue_pdf %}
   <div class="action-row">
     <a class="btn" target="_blank" rel="noopener"
        href="{{ url_for('mint.serve_issue_pdf', slug=j.slug, issue_slug=issue.slug) }}">
@@ -32,8 +39,17 @@
       …or use the visual editor below: click pages to mark article starts / ToC / skip.
     </span>
   </div>
+  {% else %}
+  <p class="muted" style="margin-top: 0.5rem; font-size: 0.9rem;">
+    No whole-issue PDF on disk — this issue's per-article PDFs live in
+    <code>pdfs/{{ issue.slug }}/</code> already, so the visual editor
+    and splitter aren't applicable. Edit article rows below directly,
+    then save the sidecar.
+  </p>
+  {% endif %}
 </div>
 
+{% if issue.has_issue_pdf %}
 <div class="card">
   <div class="journal-header">
     <h2 style="margin: 0; font-size: 1.05rem;">Visual editor</h2>
@@ -92,7 +108,9 @@
   </form>
   {% endif %}
 </div>
+{% endif %}{# end visual editor — only for issues with a whole-issue PDF #}
 
+{% if issue.has_issue_pdf %}
 <div class="card">
   <h2 style="margin-top: 0; font-size: 1.05rem;">Table of contents (OCR)</h2>
   <p class="muted" style="font-size: 0.9rem;">
@@ -137,6 +155,7 @@
   </details>
   {% endif %}
 </div>
+{% endif %}{# end ToC OCR card — only when whole-issue PDF exists #}
 
 <form method="POST" action="{{ url_for('mint.issue_save', slug=j.slug, issue_slug=issue.slug) }}"
       class="wizard-form">
@@ -257,6 +276,7 @@
   </div>
 </form>
 
+{% if issue.has_issue_pdf %}
 <div class="card">
   <h2 style="margin-top: 0; font-size: 1.05rem;">Split this issue into per-article PDFs</h2>
   <p class="muted" style="font-size: 0.85rem;">
@@ -272,6 +292,7 @@
     <button type="submit" class="btn">Split now</button>
   </form>
 </div>
+{% endif %}
 
 <style>
   .article-rows { font-size: 0.85rem; width: 100%; }
