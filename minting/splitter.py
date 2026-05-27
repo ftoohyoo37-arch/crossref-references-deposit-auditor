@@ -93,6 +93,12 @@ def split_issue(issue_pdf: Path, sidecar: IssueSidecar,
     if errors:
         raise SplitError("Boundaries invalid:\n  - " + "\n  - ".join(errors))
 
+    # Pages the user explicitly marked as "not part of any article"
+    # (advertisements, photo spreads, etc.). Excluded from every
+    # per-article PDF, even when nominally inside an article's
+    # start_page..end_page range.
+    skip_set = set(int(p) for p in (sidecar.skip_pages or []))
+
     output_dir.mkdir(parents=True, exist_ok=True)
     written: list[dict] = []
     skipped: list[str] = []
@@ -102,9 +108,14 @@ def split_issue(issue_pdf: Path, sidecar: IssueSidecar,
             skipped.append(art.filename)
             continue
         writer = PdfWriter()
+        included_pages: list[int] = []   # 1-based, for the summary
         # 1-based inclusive → 0-based slice
         for p in range(art.start_page - 1, art.end_page):
+            page_1based = p + 1
+            if page_1based in skip_set:
+                continue
             writer.add_page(reader.pages[p])
+            included_pages.append(page_1based)
         # Preserve PDF metadata in a minimal way; CrossRef registration
         # XML carries the canonical metadata anyway.
         if art.title:
@@ -114,6 +125,7 @@ def split_issue(issue_pdf: Path, sidecar: IssueSidecar,
         written.append({
             "filename": art.filename,
             "pages": (art.start_page, art.end_page),
+            "included_pages": included_pages,
             "size_kb": target.stat().st_size // 1024,
         })
 
