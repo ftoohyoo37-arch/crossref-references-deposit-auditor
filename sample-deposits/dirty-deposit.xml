@@ -1,0 +1,76 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<doi_batch xmlns="http://www.crossref.org/doi_resources_schema/4.3.6" version="4.3.6">
+  <head>
+    <doi_batch_id>sample-dirty-001</doi_batch_id>
+    <depositor>
+      <depositor_name>Sample Press</depositor_name>
+      <email_address>deposits@example.org</email_address>
+    </depositor>
+  </head>
+  <body>
+    <doi_citations>
+      <doi>10.99999/sample.1.2.01</doi>
+      <citation_list>
+
+        <!-- DEMO ROW 1 — glued citation: two refs concatenated into one
+             <unstructured_citation>. Auditor's glued-citation rule
+             should flag this and offer a Split action. -->
+        <citation key="ref1">
+          <unstructured_citation>Anson, Chris M. "Closed Systems and Standardized Writing Tests." College Composition and Communication, vol. 60, no. 1, 2008, pp. 113-128. Bartholomae, David. "Inventing the University." Journal of Basic Writing, vol. 5, no. 1, 1986, pp. 4-23.</unstructured_citation>
+        </citation>
+
+        <!-- DEMO ROW 2 — DOI carries the https://doi.org/ prefix.
+             Crossref wants the bare DOI; auditor's doi_format rule
+             flags this and the cleanup UI strips the prefix. -->
+        <citation key="ref2">
+          <unstructured_citation>Bizzell, Patricia. Academic Discourse and Critical Consciousness. University of Pittsburgh Press, 1992.</unstructured_citation>
+          <doi>https://doi.org/10.2307/378193</doi>
+        </citation>
+
+        <!-- DEMO ROW 3 — repeat-author "———." marker that didn't get
+             expanded by the em-dash patcher. Auditor's
+             repeat_author_marker rule flags this and the cleanup UI
+             can splice the previous citation's author back in. -->
+        <citation key="ref3">
+          <unstructured_citation>———. "Reflections on Academic Discourse: How It Relates to Freshmen and Colleagues." College English, vol. 53, no. 2, 1991, pp. 135-155.</unstructured_citation>
+        </citation>
+
+        <!-- DEMO ROW 4 — body-text paragraph mistakenly picked up as
+             a citation. Long, no recognizable citation shape, just
+             prose. Auditor's paragraph_shaped rule flags this and
+             the cleanup UI offers Delete. -->
+        <citation key="ref4">
+          <unstructured_citation>This essay argues that the writing classroom must reckon with the complex relationships between language standardization and student identity, particularly in the context of the multilingual university where competing language ideologies create real material consequences for student writers attempting to navigate institutional expectations.</unstructured_citation>
+        </citation>
+
+        <!-- DEMO ROW 5 — duplicate-year glitch: "1992 1992" inside the
+             citation. Common OCR/scramble artifact. Auditor's
+             duplicate_year rule flags this for review. -->
+        <citation key="ref5">
+          <unstructured_citation>Harris, Joseph. A Teaching Subject: Composition Since 1966. Prentice Hall, 1992 1992.</unstructured_citation>
+        </citation>
+
+        <!-- DEMO ROW 6 — future-dated year, almost always a typo or
+             OCR confusion. Auditor flags years more than 2 years
+             beyond the deposit batch's timestamp. -->
+        <citation key="ref6">
+          <unstructured_citation>Shaughnessy, Mina P. Errors and Expectations: A Guide for the Teacher of Basic Writing. Oxford University Press, 2099.</unstructured_citation>
+        </citation>
+
+        <!-- DEMO ROW 7 — stuck whitespace (multiple internal spaces /
+             tabs from OCR scrambling). Auditor's stuck_whitespace
+             rule flags this; cleanup normalizes. -->
+        <citation key="ref7">
+          <unstructured_citation>Fulkerson,   Richard. "Composition  at the  Turn   of the Twenty-First   Century." College Composition and Communication, vol. 56, no. 4,   2005, pp. 654-687.</unstructured_citation>
+        </citation>
+
+        <!-- DEMO ROW 8 — a clean reference so reviewers can see what
+             the audit leaves alone. -->
+        <citation key="ref8">
+          <unstructured_citation>Elbow, Peter. Writing Without Teachers. Oxford University Press, 1973.</unstructured_citation>
+        </citation>
+
+      </citation_list>
+    </doi_citations>
+  </body>
+</doi_batch>

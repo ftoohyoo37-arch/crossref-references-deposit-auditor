@@ -1,0 +1,41 @@
+# Crossref Auditor — one-command setup
+#
+#   docker compose up
+#
+# Then open http://localhost:5001 in a browser.
+#
+# Three services. Only the first is required to run the Auditor itself.
+# The other two — GROBID and AnyStyle — are the reference-extraction
+# services the Auditor's pipeline UI integrates with when you also have
+# the upstream scraper code. Leave them commented out if you're only
+# using the Auditor to clean deposits produced elsewhere.
+
+services:
+
+  auditor:
+    build: .
+    image: crossref-auditor:latest
+    ports:
+      - "5001:5001"
+    volumes:
+      # Persist the SQLite audit history + uploaded XMLs between runs.
+      - ./uploads:/app/uploads
+      - ./audits.db:/app/audits.db
+    environment:
+      - PYTHONUNBUFFERED=1
+
+  # ---------- Optional: reference-extraction stack ----------
+  # Uncomment if you also have the upstream scraper pipeline and want
+  # the Auditor's /pipeline UI to drive extraction directly.
+
+  # grobid:
+  #   image: grobid/grobid:0.9.0-full
+  #   ports:
+  #     - "8070:8070"
+  #   restart: unless-stopped
+  #
+  # anystyle:
+  #   image: dainst/anystyle-sinatra:latest
+  #   ports:
+  #     - "4567:4567"
+  #   restart: unless-stopped

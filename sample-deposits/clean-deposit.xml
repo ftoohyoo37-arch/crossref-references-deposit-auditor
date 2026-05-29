@@ -1,0 +1,46 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<doi_batch xmlns="http://www.crossref.org/doi_resources_schema/4.3.6" version="4.3.6">
+  <head>
+    <doi_batch_id>sample-clean-001</doi_batch_id>
+    <depositor>
+      <depositor_name>Sample Press</depositor_name>
+      <email_address>deposits@example.org</email_address>
+    </depositor>
+  </head>
+  <body>
+    <doi_citations>
+      <doi>10.99999/sample.1.1.01</doi>
+      <citation_list>
+        <citation key="ref1">
+          <unstructured_citation>Anson, Chris M. "Closed Systems and Standardized Writing Tests." College Composition and Communication, vol. 60, no. 1, 2008, pp. 113-128.</unstructured_citation>
+          <doi>10.58680/ccc20086681</doi>
+        </citation>
+        <citation key="ref2">
+          <unstructured_citation>Bartholomae, David. "Inventing the University." Journal of Basic Writing, vol. 5, no. 1, 1986, pp. 4-23.</unstructured_citation>
+        </citation>
+        <citation key="ref3">
+          <unstructured_citation>Bizzell, Patricia. Academic Discourse and Critical Consciousness. University of Pittsburgh Press, 1992.</unstructured_citation>
+        </citation>
+        <citation key="ref4">
+          <unstructured_citation>Elbow, Peter. "Reflections on Academic Discourse: How It Relates to Freshmen and Colleagues." College English, vol. 53, no. 2, 1991, pp. 135-155.</unstructured_citation>
+          <doi>10.2307/378193</doi>
+        </citation>
+      </citation_list>
+    </doi_citations>
+    <doi_citations>
+      <doi>10.99999/sample.1.1.02</doi>
+      <citation_list>
+        <citation key="ref1">
+          <unstructured_citation>Fulkerson, Richard. "Composition at the Turn of the Twenty-First Century." College Composition and Communication, vol. 56, no. 4, 2005, pp. 654-687.</unstructured_citation>
+          <doi>10.58680/ccc20054235</doi>
+        </citation>
+        <citation key="ref2">
+          <unstructured_citation>Harris, Joseph. A Teaching Subject: Composition Since 1966. Prentice Hall, 1997.</unstructured_citation>
+        </citation>
+        <citation key="ref3">
+          <unstructured_citation>Shaughnessy, Mina P. Errors and Expectations: A Guide for the Teacher of Basic Writing. Oxford University Press, 1977.</unstructured_citation>
+        </citation>
+      </citation_list>
+    </doi_citations>
+  </body>
+</doi_batch>
